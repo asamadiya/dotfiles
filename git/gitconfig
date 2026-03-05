@@ -1,0 +1,36 @@
+[alias]
+    st = status
+    ci = commit
+    ca = commit -a --amend -C HEAD
+    br = branch
+    co = checkout
+    ds = diff --staged
+    sum = show -s
+    hist = log --pretty=format:\"%h %ad | %s%d [%an]\" --graph --date=short
+    plog = log -p
+    sglog = log --graph --decorate --pretty=oneline --abbrev-commit
+    glog = log --graph --decorate --pretty=oneline --abbrev-commit --all --date=local
+    ls = ls-files
+
+# Show files ignored by git:
+#     ign = ls-files -o -i --exclude-standard
+#  type = cat-file -t
+#  dump = cat-file -p
+
+[user]
+	name = Siva Popuri
+	email = spopuri@linkedin.com
+
+[color]
+    ui = auto
+[filter "lfs"]
+	required = true
+	clean = git-lfs clean -- %f
+	smudge = git-lfs smudge -- %f
+	process = git-lfs filter-process
+[credential "https://github.com"]
+	helper = 
+	helper = !/usr/bin/gh auth git-credential
+[credential "https://gist.github.com"]
+	helper = 
+	helper = !/usr/bin/gh auth git-credential
