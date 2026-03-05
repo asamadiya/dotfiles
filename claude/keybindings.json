@@ -1,0 +1,12 @@
+[
+  {
+    "key": "ctrl+g",
+    "command": "git status && git diff --stat",
+    "description": "Quick git status + diff summary"
+  },
+  {
+    "key": "ctrl+k",
+    "command": "nvidia-smi --query-gpu=utilization.gpu,memory.used,memory.total --format=csv,noheader",
+    "description": "GPU utilization check"
+  }
+]

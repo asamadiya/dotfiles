@@ -1,0 +1,34 @@
+#!/bin/bash
+# Saves claude session IDs for each tmux pane running claude.
+# Called as tmux-resurrect post-save-all hook.
+SAVE_DIR="$HOME/.tmux/resurrect"
+SESSION_MAP="$SAVE_DIR/claude_sessions"
+
+mkdir -p "$SAVE_DIR"
+: > "$SESSION_MAP"
+
+# Iterate all panes
+while IFS= read -r line; do
+    pane_id=$(echo "$line" | awk '{print $1}')
+    pane_pid=$(echo "$line" | awk '{print $2}')
+    pane_dir=$(echo "$line" | awk '{print $3}')
+
+    [ -z "$pane_pid" ] && continue
+
+    # Find claude processes that are children of this pane's shell
+    claude_pid=$(pgrep -P "$pane_pid" -x claude 2>/dev/null | head -1)
+    [ -z "$claude_pid" ] && continue
+
+    # Map directory to claude's project path
+    project_hash=$(echo -n "$pane_dir" | sed 's|/|-|g')
+    session_dir="$HOME/.claude/projects/$project_hash"
+
+    [ -d "$session_dir" ] || continue
+
+    # Find the most recently modified session file
+    latest_session=$(find "$session_dir" -maxdepth 1 -name '*.jsonl' -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-)
+    if [ -n "$latest_session" ]; then
+        session_id=$(basename "$latest_session" .jsonl)
+        echo "$pane_id $pane_dir $session_id" >> "$SESSION_MAP"
+    fi
+done < <(tmux list-panes -a -F '#{session_name}:#{window_index}.#{pane_index} #{pane_pid} #{pane_current_path}')

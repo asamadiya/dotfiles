@@ -1,0 +1,57 @@
+# Begin ~/.bashrc
+# Written for Beyond Linux From Scratch
+# by James Robertson <jameswrobertson@earthlink.net>
+
+# Personal aliases and functions.
+
+# Personal environment variables and startup programs should go in
+# ~/.bash_profile.  System wide environment variables and startup
+# programs are in /etc/profile.  System wide aliases and functions are
+# in /etc/bashrc.
+
+if [ -f "/etc/bash.bashrc" ] ; then
+  source /etc/bash.bashrc
+fi
+
+# libraries
+export LD_LIBRARY_PATH=/usr/lib64:$LD_LIBRARY_PATH
+
+# python
+export PATH=/home/spopuri/.local/bin:$PATH
+
+# cuda env
+export CUDA_HOME=/usr/local/cuda-11.8
+export CUDA_PATH=${CUDA_HOME}
+export PATH=${CUDA_PATH}/bin:$PATH
+export LD_LIBRARY_PATH=${CUDA_HOME}/lib64:$LD_LIBRARY_PATH
+export LD_LIBRARY_PATH=${CUDA_HOME}/extras/CUPTI/lib64:$LD_LIBRARY_PATH
+
+# tensorrt
+export TENSORRT_HOME=/usr/local/TensorRT-8.6.1.6
+export LD_LIBRARY_PATH=${TENSORRT_HOME}/lib:$LD_LIBRARY_PATH
+
+# my aliases
+alias k=kubectl
+alias c='claude'
+alias cc='claude --continue'
+alias cr='claude --resume'
+alias cw='claude --worktree'
+
+# End ~/.bashrc
+
+# Rust
+#export RUSTUP_DIST_SERVER=https://artifactory.corp.linkedin.com:8083/artifactory/rustup-remote
+#export RUSTUP_UPDATE_ROOT=https://artifactory.corp.linkedin.com:8083/artifactory/rustup-remote/rustup
+#source $HOME/.cargo/env
+#export VOLTA_HOME="$HOME/.volta"
+#export PATH="$VOLTA_HOME/bin:$PATH"
+#. "$HOME/.cargo/env"
+
+# pytorch
+export LD_LIBRARY_PATH=~/libtorch/lib
+
+# history
+export PROMPT_COMMAND="history -a; sync"
+export HISTSIZE=10000
+export HISTFILESIZE=20000
+export HISTCONTROL=ignoredups:erasedups

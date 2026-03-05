@@ -1,0 +1,19 @@
+#!/bin/bash
+# Restores a claude session in the current pane's directory.
+# Called by tmux-resurrect inline strategy: claude->/home/spopuri/bin/tmux-claude-restore
+SESSION_MAP="$HOME/.tmux/resurrect/claude_sessions"
+DIR="$(pwd)"
+
+# Unset all Claude env vars to avoid "nested session" detection
+unset CLAUDE_CODE_SESSION CLAUDE_CODE_ENTRY_POINT CLAUDECODE 2>/dev/null
+
+if [ -f "$SESSION_MAP" ]; then
+    # Match directory exactly (space-delimited fields: pane_id dir session_id)
+    session_id=$(awk -v dir="$DIR" '$2 == dir {print $3}' "$SESSION_MAP" | tail -1)
+    if [ -n "$session_id" ]; then
+        exec claude --resume "$session_id"
+    fi
+fi
+
+# Fallback: continue most recent conversation in this directory
+exec claude --continue

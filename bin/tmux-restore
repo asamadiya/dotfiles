@@ -1,0 +1,11 @@
+#!/bin/bash
+# Manually trigger tmux-resurrect restore if auto-restore didn't kick in
+RESURRECT_DIR="$HOME/.tmux/resurrect"
+if [ -f "$RESURRECT_DIR/last" ]; then
+    echo "Restoring tmux sessions from: $(readlink -f "$RESURRECT_DIR/last")"
+    tmux run-shell "$HOME/.tmux/plugins/tmux-resurrect/scripts/restore.sh"
+else
+    echo "No saved tmux sessions found. Starting fresh."
+    tmux new-session -d -s main 2>/dev/null
+    tmux attach -t main
+fi
