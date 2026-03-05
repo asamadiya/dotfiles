@@ -89,6 +89,61 @@ else
     cd /tmp && rm -rf "tmux-${TMUX_VER}"
 fi
 
+# ── Modern CLI tools (static binaries, no sudo) ──
+install_tool() {
+    local name="$1" url="$2" strip="${3:-0}" filter="${4:-}"
+    if command -v "$name" &>/dev/null; then
+        ok "$name already installed"
+        return
+    fi
+    log "Installing $name"
+    if [ -n "$filter" ]; then
+        curl -fsSL "$url" | tar xz --strip-components="$strip" -C "$LOCAL/bin/" "$filter" 2>/dev/null
+    else
+        curl -fsSL "$url" | tar xz --strip-components="$strip" -C "$LOCAL/bin/" 2>/dev/null ||
+        curl -fsSL "$url" | tar xj --strip-components="$strip" -C "$LOCAL/bin/" 2>/dev/null
+    fi
+    ok "$name"
+}
+
+install_tool fzf "https://github.com/junegunn/fzf/releases/download/v0.57.0/fzf-0.57.0-linux_amd64.tar.gz"
+install_tool starship "https://starship.rs/install.sh" 0  # special case below
+install_tool delta "https://github.com/dandavison/delta/releases/download/0.18.2/delta-0.18.2-x86_64-unknown-linux-musl.tar.gz" 1 "delta-0.18.2-x86_64-unknown-linux-musl/delta"
+install_tool bat "https://github.com/sharkdp/bat/releases/download/v0.25.0/bat-v0.25.0-x86_64-unknown-linux-musl.tar.gz" 1 "bat-v0.25.0-x86_64-unknown-linux-musl/bat"
+install_tool eza "https://github.com/eza-community/eza/releases/download/v0.20.14/eza_x86_64-unknown-linux-musl.tar.gz"
+install_tool lazygit "https://github.com/jesseduffield/lazygit/releases/download/v0.44.1/lazygit_0.44.1_Linux_x86_64.tar.gz" 0 "lazygit"
+
+# starship needs its own installer
+if ! command -v starship &>/dev/null; then
+    log "Installing starship"
+    curl -fsSL https://starship.rs/install.sh | sh -s -- --bin-dir "$LOCAL/bin" --yes 2>&1 | tail -1
+    ok "starship"
+fi
+
+# zoxide
+if ! command -v zoxide &>/dev/null; then
+    log "Installing zoxide"
+    curl -fsSL https://raw.githubusercontent.com/ajeetdsouza/zoxide/main/install.sh | sh 2>&1 | tail -1
+    ok "zoxide"
+fi
+
+# fzf shell scripts
+if [ ! -d "$HOME/.local/share/fzf" ]; then
+    log "Installing fzf shell integration"
+    git clone --depth 1 https://github.com/junegunn/fzf.git "$HOME/.local/share/fzf"
+    ok "fzf shell scripts"
+fi
+
+# bat Catppuccin theme
+BAT_THEMES="$(bat --config-dir 2>/dev/null || echo "$HOME/.config/bat")/themes"
+if [ ! -f "$BAT_THEMES/Catppuccin Mocha.tmTheme" ]; then
+    log "Installing bat Catppuccin theme"
+    mkdir -p "$BAT_THEMES"
+    curl -fsSL "https://raw.githubusercontent.com/catppuccin/bat/main/themes/Catppuccin%20Mocha.tmTheme" -o "$BAT_THEMES/Catppuccin Mocha.tmTheme"
+    bat cache --build 2>&1 | tail -1
+    ok "bat theme"
+fi
+
 # ── oh-my-tmux ──
 OHMYTMUX="$HOME/oh-my-tmux"
 if [ ! -d "$OHMYTMUX" ]; then

@@ -1,3 +1,48 @@
+[user]
+    name = asamadiya
+    email = asamadiya@users.noreply.github.com
+
+[core]
+    pager = delta
+    editor = vim
+    autocrlf = input
+
+[interactive]
+    diffFilter = delta --color-only
+
+[delta]
+    navigate = true
+    dark = true
+    syntax-theme = Catppuccin Mocha
+    line-numbers = true
+    side-by-side = false
+    file-style = bold yellow ul
+    hunk-header-style = omit
+
+[color]
+    ui = auto
+
+[diff]
+    colorMoved = default
+    algorithm = histogram
+
+[merge]
+    conflictstyle = zdiff3
+    tool = vimdiff
+
+[push]
+    default = current
+    autoSetupRemote = true
+
+[pull]
+    rebase = true
+
+[fetch]
+    prune = true
+
+[rerere]
+    enabled = true
+
 [alias]
     st = status
     ci = commit
@@ -5,32 +50,27 @@
     br = branch
     co = checkout
     ds = diff --staged
-    sum = show -s
+    sw = switch
+    sc = switch -c
+    unstage = reset HEAD --
+    last = log -1 HEAD --stat
+    amend = commit --amend --no-edit
+    wip = !git add -A && git commit -m 'wip'
     hist = log --pretty=format:\"%h %ad | %s%d [%an]\" --graph --date=short
-    plog = log -p
     sglog = log --graph --decorate --pretty=oneline --abbrev-commit
     glog = log --graph --decorate --pretty=oneline --abbrev-commit --all --date=local
     ls = ls-files
 
-# Show files ignored by git:
-#     ign = ls-files -o -i --exclude-standard
-#  type = cat-file -t
-#  dump = cat-file -p
-
-[user]
-	name = Siva Popuri
-	email = spopuri@linkedin.com
-
-[color]
-    ui = auto
 [filter "lfs"]
-	required = true
-	clean = git-lfs clean -- %f
-	smudge = git-lfs smudge -- %f
-	process = git-lfs filter-process
+    required = true
+    clean = git-lfs clean -- %f
+    smudge = git-lfs smudge -- %f
+    process = git-lfs filter-process
+
 [credential "https://github.com"]
-	helper = 
-	helper = !/usr/bin/gh auth git-credential
+    helper =
+    helper = !/usr/bin/gh auth git-credential
+
 [credential "https://gist.github.com"]
-	helper = 
-	helper = !/usr/bin/gh auth git-credential
+    helper =
+    helper = !/usr/bin/gh auth git-credential

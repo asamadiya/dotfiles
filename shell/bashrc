@@ -1,57 +1,77 @@
-# Begin ~/.bashrc
-# Written for Beyond Linux From Scratch
-# by James Robertson <jameswrobertson@earthlink.net>
+# ~/.bashrc
+[[ $- != *i* ]] && return
 
-# Personal aliases and functions.
+[ -f /etc/bash.bashrc ] && source /etc/bash.bashrc
 
-# Personal environment variables and startup programs should go in
-# ~/.bash_profile.  System wide environment variables and startup
-# programs are in /etc/profile.  System wide aliases and functions are
-# in /etc/bashrc.
+# -- path --
+export PATH="$HOME/.local/bin:$HOME/bin:$PATH"
+export PATH="/usr/local/cuda-11.8/bin:$PATH"
 
-if [ -f "/etc/bash.bashrc" ] ; then
-  source /etc/bash.bashrc
-fi
-
-# libraries
-export LD_LIBRARY_PATH=/usr/lib64:$LD_LIBRARY_PATH
-
-# python
-export PATH=/home/spopuri/.local/bin:$PATH
-
-# cuda env
+# -- env --
+export EDITOR=vim
+export VISUAL=vim
+export LANG=en_US.UTF-8
 export CUDA_HOME=/usr/local/cuda-11.8
-export CUDA_PATH=${CUDA_HOME}
-export PATH=${CUDA_PATH}/bin:$PATH
-export LD_LIBRARY_PATH=${CUDA_HOME}/lib64:$LD_LIBRARY_PATH
-export LD_LIBRARY_PATH=${CUDA_HOME}/extras/CUPTI/lib64:$LD_LIBRARY_PATH
-
-# tensorrt
+export CUDA_PATH=$CUDA_HOME
 export TENSORRT_HOME=/usr/local/TensorRT-8.6.1.6
-export LD_LIBRARY_PATH=${TENSORRT_HOME}/lib:$LD_LIBRARY_PATH
+export LD_LIBRARY_PATH="$CUDA_HOME/lib64:$CUDA_HOME/extras/CUPTI/lib64:$TENSORRT_HOME/lib:$HOME/libtorch/lib:/usr/lib64:$LD_LIBRARY_PATH"
 
-# my aliases
+# -- history --
+export HISTSIZE=50000
+export HISTFILESIZE=100000
+export HISTCONTROL=ignoreboth:erasedups
+export HISTIGNORE='ls:ll:cd:pwd:bg:fg:history:clear'
+export HISTTIMEFORMAT='%F %T '
+shopt -s histappend
+export PROMPT_COMMAND="history -a; history -c; history -r"
+
+# -- shell options --
+shopt -s cdspell dirspell autocd globstar checkwinsize
+
+# -- aliases --
 alias k=kubectl
 alias c='claude'
 alias cc='claude --continue'
 alias cr='claude --resume'
 alias cw='claude --worktree'
+alias g='git'
+alias gs='git status'
+alias gd='git diff'
+alias gds='git diff --staged'
+alias gl='git log --oneline -20'
+alias gp='git push'
+alias lg='lazygit'
+alias ..='cd ..'
+alias ...='cd ../..'
 
-# End ~/.bashrc
+# -- modern CLI tools (conditional) --
+command -v eza &>/dev/null && {
+    alias ls='eza --color=always --group-directories-first'
+    alias ll='eza -alh --git --group-directories-first'
+    alias lt='eza --tree --level=2'
+}
+command -v bat &>/dev/null && {
+    export BAT_THEME="Catppuccin Mocha"
+    export MANPAGER="sh -c 'col -bx | bat -l man -p'"
+}
+command -v zoxide &>/dev/null && eval "$(zoxide init bash)"
 
-# Rust
-#export RUSTUP_DIST_SERVER=https://artifactory.corp.linkedin.com:8083/artifactory/rustup-remote
-#export RUSTUP_UPDATE_ROOT=https://artifactory.corp.linkedin.com:8083/artifactory/rustup-remote/rustup
-#source $HOME/.cargo/env
-#export VOLTA_HOME="$HOME/.volta"
-#export PATH="$VOLTA_HOME/bin:$PATH"
-#. "$HOME/.cargo/env"
+# -- fzf --
+if command -v fzf &>/dev/null; then
+    export FZF_DEFAULT_OPTS='--height 40% --layout=reverse --border --color=bg+:#313244,bg:#1e1e2e,spinner:#f5e0dc,hl:#f38ba8,fg:#cdd6f4,header:#f38ba8,info:#cba6f7,pointer:#f5e0dc,marker:#f5e0dc,fg+:#cdd6f4,prompt:#cba6f7,hl+:#f38ba8'
+    export FZF_CTRL_T_COMMAND='rg --files --hidden --glob "!.git"'
+    export FZF_CTRL_T_OPTS='--preview "bat --color=always --line-range :100 {} 2>/dev/null || head -100 {}"'
+    export FZF_ALT_C_OPTS='--preview "eza --tree --level=1 {} 2>/dev/null || ls {}"'
+    [ -f ~/.local/share/fzf/shell/key-bindings.bash ] && source ~/.local/share/fzf/shell/key-bindings.bash
+    [ -f ~/.local/share/fzf/shell/completion.bash ] && source ~/.local/share/fzf/shell/completion.bash
+fi
 
-# pytorch
-export LD_LIBRARY_PATH=~/libtorch/lib
+# -- starship prompt --
+command -v starship &>/dev/null && eval "$(starship init bash)"
 
-# history
-export PROMPT_COMMAND="history -a; sync"
-export HISTSIZE=10000
-export HISTFILESIZE=20000
-export HISTCONTROL=ignoredups:erasedups
+# -- volta --
+export VOLTA_HOME="$HOME/.volta"
+export PATH="$VOLTA_HOME/bin:$PATH"
+
+# -- cargo (conditional) --
+[ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"

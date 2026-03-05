@@ -17,6 +17,9 @@ declare -A FILES=(
     ["$HOME/.claude/keybindings.json"]="$DOTFILES/claude/keybindings.json"
     ["$HOME/.claude/rules/persona.md"]="$DOTFILES/claude/rules/persona.md"
     ["$HOME/CLAUDE.md"]="$DOTFILES/claude/CLAUDE.md"
+    ["$HOME/.inputrc"]="$DOTFILES/shell/inputrc"
+    ["$HOME/.vimrc"]="$DOTFILES/vim/vimrc"
+    ["$HOME/.config/starship.toml"]="$DOTFILES/config/starship.toml"
 )
 
 # ── Template files: live_path <-> repo_template ──

@@ -153,6 +153,25 @@ set -g @continuum-save-interval '5'
 set -g @continuum-restore 'on'
 set -g @continuum-boot 'on'
 
+# Additional plugins
+set -g @plugin 'sainnhe/tmux-fzf'
+set -g @plugin 'tmux-plugins/tmux-yank'
+set -g @plugin 'Morantron/tmux-fingers'
+set -g @plugin 'tmux-plugins/tmux-open'
+
+# tmux-fzf
+TMUX_FZF_LAUNCH_KEY="f"
+TMUX_FZF_ORDER="session|window|pane|command|keybinding"
+
+# tmux-yank (OSC52 fallback if no xclip)
+set -g @yank_selection_mouse 'clipboard'
+set -g @yank_action 'copy-pipe'
+
+# tmux-fingers
+set -g @fingers-key F
+set -g @fingers-pattern-0 '[a-f0-9]{7,40}'
+set -g @fingers-pattern-1 'https?://[^\s>)]*'
+
 
 # -- fixes applied post-setup ------------------------------------------------
 

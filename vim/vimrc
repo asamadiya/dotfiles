@@ -1,0 +1,89 @@
+set nocompatible
+filetype plugin indent on
+syntax on
+
+" -- Display --
+set number relativenumber
+set cursorline
+set scrolloff=8
+set sidescrolloff=8
+set signcolumn=yes
+set colorcolumn=100
+set laststatus=2
+set showcmd showmode
+set wildmenu wildmode=longest:full,full
+
+" -- Colors --
+set background=dark
+set termguicolors
+silent! colorscheme habamax
+
+" -- Search --
+set hlsearch incsearch
+set ignorecase smartcase
+nnoremap <Esc> :nohlsearch<CR>
+
+" -- Indentation --
+set expandtab tabstop=4 shiftwidth=4 softtabstop=4
+set autoindent smartindent shiftround
+
+" -- Behavior --
+set hidden
+set noswapfile nobackup nowritebackup
+set undofile undodir=~/.vim/undodir
+set updatetime=250 timeoutlen=500
+set splitbelow splitright
+set mouse=a
+set clipboard=unnamedplus
+set backspace=indent,eol,start
+
+" -- Status line --
+set statusline=\ %f\ %m%r%=\ %y\ %l:%c\ %p%%\ 
+
+" -- netrw --
+let g:netrw_banner = 0
+let g:netrw_liststyle = 3
+let g:netrw_browse_split = 4
+let g:netrw_altv = 1
+let g:netrw_winsize = 25
+
+" -- Keys --
+let mapleader = " "
+nnoremap <leader>e :Lexplore<CR>
+nnoremap <leader>w :w<CR>
+nnoremap <leader>q :q<CR>
+nnoremap <C-h> <C-w>h
+nnoremap <C-j> <C-w>j
+nnoremap <C-k> <C-w>k
+nnoremap <C-l> <C-w>l
+nnoremap <leader>bn :bnext<CR>
+nnoremap <leader>bp :bprevious<CR>
+nnoremap <leader>bd :bdelete<CR>
+vnoremap J :m '>+1<CR>gv=gv
+vnoremap K :m '<-2<CR>gv=gv
+nnoremap <C-d> <C-d>zz
+nnoremap <C-u> <C-u>zz
+nnoremap n nzzzv
+nnoremap N Nzzzv
+
+" -- fzf/rg --
+if executable('fzf')
+    set rtp+=~/.local/share/fzf
+    nnoremap <leader>f :FZF<CR>
+endif
+if executable('rg')
+    set grepprg=rg\ --vimgrep\ --smart-case
+    set grepformat=%f:%l:%c:%m
+endif
+
+" -- Autocommands --
+augroup vimrc
+    autocmd!
+    autocmd BufReadPost * if line("'\"") > 1 && line("'\"") <= line("$") | exe "normal! g'\"" | endif
+    autocmd BufWritePre * %s/\s\+$//e
+    autocmd FileType python setlocal tabstop=4 shiftwidth=4
+    autocmd FileType yaml,json,javascript,typescript setlocal tabstop=2 shiftwidth=2
+    autocmd FileType make setlocal noexpandtab
+augroup END
+
+silent! call mkdir($HOME . '/.vim/undodir', 'p')

@@ -19,6 +19,7 @@ link() {
 
 generate() {
     local tpl="$1" dst="$2"
+    mkdir -p "$(dirname "$dst")"
     sed "s|__USER__|$(whoami)|g; s|__HOME__|$HOME|g" "$tpl" > "$dst"
     echo "  generated: $dst"
 }
@@ -27,6 +28,11 @@ echo "=== Shell ==="
 link "$DOTFILES/shell/bashrc"        "$HOME/.bashrc"
 link "$DOTFILES/shell/bash_profile"  "$HOME/.bash_profile"
 link "$DOTFILES/shell/profile"       "$HOME/.profile"
+link "$DOTFILES/shell/inputrc"       "$HOME/.inputrc"
+
+echo "=== Vim ==="
+link "$DOTFILES/vim/vimrc"           "$HOME/.vimrc"
+mkdir -p "$HOME/.vim/undodir"
 
 echo "=== Git ==="
 link "$DOTFILES/git/gitconfig"       "$HOME/.gitconfig"
@@ -40,6 +46,10 @@ else
 fi
 link "$OHMYTMUX/.tmux.conf" "$HOME/.tmux.conf"
 generate "$DOTFILES/tmux/tmux.conf.local.tpl" "$HOME/.tmux.conf.local"
+
+echo "=== Starship ==="
+mkdir -p "$HOME/.config"
+link "$DOTFILES/config/starship.toml" "$HOME/.config/starship.toml"
 
 echo "=== Scripts ==="
 mkdir -p "$HOME/bin"

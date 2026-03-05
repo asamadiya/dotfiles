@@ -1,6 +1,6 @@
 #!/bin/bash
 # Restores a claude session in the current pane's directory.
-# Called by tmux-resurrect inline strategy: claude->/home/spopuri/bin/tmux-claude-restore
+# Called by tmux-resurrect inline strategy: claude->$HOME/bin/tmux-claude-restore
 SESSION_MAP="$HOME/.tmux/resurrect/claude_sessions"
 DIR="$(pwd)"
 
