@@ -189,6 +189,10 @@ bind-key -T copy-mode-vi MouseDragEnd1Pane send-keys -X copy-pipe-and-cancel 'xc
 
 # -- custom variables ----------------------------------------------------------
 
+# >>> host-health segment (managed) >>>
+set-option -ga status-right " #(__HOME__/bin/host-health.sh)"
+# <<< host-health segment (managed) <<<
+
 # /!\ do not remove the following line
 # EOF
 #

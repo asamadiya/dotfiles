@@ -41,6 +41,7 @@ dotfiles/
 | `bin/tmux-save-claude-sessions` | Post-save hook — maps panes to claude session IDs |
 | `bin/claude-statusline.sh` | Statusline: model, git branch, GPU, load, cost, context bar |
 | `bin/claude-guard-main.sh` | PreToolUse hook — blocks Edit/Write on main/master branch |
+| `bin/host-health.sh` | tmux status segment: 1-min load + MemAvailable with color escalation (gray→yellow→red) |
 
 ## Architecture Decisions
 

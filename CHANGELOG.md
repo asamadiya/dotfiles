@@ -1,5 +1,29 @@
 # Changelog
 
+## 2026-04-19 — Host-health status segment
+
+Added `bin/host-health.sh` and a managed block in `tmux/tmux.conf.local.tpl`
+that appends it to status-right as a `#(...)` segment re-executed every
+`status-interval`. Shows 1-min load and MemAvailable with color escalation
+(gray / yellow / red) so runaway load or memory pressure is visible long
+before the host wedges. Prompted by a memory crisis on a 54 GB no-swap host
+where a parallel `kubectl get pods -A` fan-out across ~12 prod clusters
+pushed load past 200 and wedged new sshd connections — an early-warning
+status segment would have caught it at load ~15.
+
+**Why not `@loadavg`**: oh-my-tmux already runs its own loop that overwrites
+`@loadavg` with just the raw 1-min number every 10s. Fighting for that
+variable is fragile (the loop respawns on every tmux reload). Appending a
+separate `#(...)` segment lets tmux itself drive re-execution via
+`status-interval`, with no background updater process needed.
+
+**Thresholds** (in `bin/host-health.sh`, tune per host):
+- YELLOW: load > 10 or MemAvailable < 4G
+- RED:    load > 30 or MemAvailable < 1G
+
+Wired through `install.sh` (auto-linked from `bin/`) and `sync.sh`
+(`BIN_SCRIPTS`).
+
 ## 2026-03-05 — Initial Setup & Fixes
 
 ### tmux.conf — Rewrote from scratch

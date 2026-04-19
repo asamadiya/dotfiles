@@ -27,7 +27,8 @@ dotfiles/
 │   ├── tmux-claude-restore        # Resurrect: resumes claude sessions by ID
 │   ├── tmux-save-claude-sessions  # Post-save hook: maps panes to claude session IDs
 │   ├── tmux-restore               # Manual resurrect trigger
-│   └── keepalive.sh               # VM keepalive daemon
+│   ├── keepalive.sh               # VM keepalive daemon
+│   └── host-health.sh             # tmux status segment: 1-min load + MemAvailable, color-escalating
 ├── claude/
 │   ├── settings.json       # Permissions, hooks, plugins, env vars
 │   ├── keybindings.json    # Ctrl+G (git), Ctrl+K (GPU)

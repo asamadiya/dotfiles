@@ -31,7 +31,7 @@ declare -A TEMPLATES=(
     ["$HOME/.config/systemd/user/tmux.service"]="$DOTFILES/systemd/tmux.service.tpl"
 )
 
-BIN_SCRIPTS=(tmux-claude-restore tmux-save-claude-sessions tmux-restore keepalive.sh claude-guard-main.sh claude-statusline.sh)
+BIN_SCRIPTS=(tmux-claude-restore tmux-save-claude-sessions tmux-restore keepalive.sh claude-guard-main.sh claude-statusline.sh host-health.sh)
 
 copy_if_exists() {
     local src="$1" dst="$2"
