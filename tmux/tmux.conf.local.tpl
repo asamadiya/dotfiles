@@ -85,8 +85,9 @@ tmux_conf_copy_to_os_clipboard=true
 # -- user customizations ------------------------------------------------------
 
 # Login shell — prevents "nobody" user in restored panes
-set -g default-command "exec /bin/bash --login"
-set -g default-shell "/bin/bash"
+# zsh via zsh-bin (see docs/superpowers/specs/2026-04-21-productivity-design.md §4.1)
+set -g default-command "exec __HOME__/.local/bin/zsh --login"
+set -g default-shell "__HOME__/.local/bin/zsh"
 
 # Vi mode
 set -g mode-keys vi

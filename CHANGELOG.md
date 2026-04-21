@@ -1,5 +1,51 @@
 # Changelog
 
+## 2026-04-21 — Productivity phase (branch: power-productivity)
+
+Second phase of the power-tui overhaul — shell + CLI + neovim. Per
+`docs/superpowers/specs/2026-04-21-productivity-design.md` and its plan.
+
+**Shell stack:**
+- zsh 5.8 installed via `romkatv/zsh-bin` to `~/.local/bin/zsh` (no tdnf, no sudo, no build toolchain).
+- tmux default-command + default-shell flipped to `~/.local/bin/zsh`. Login shell unchanged (bash).
+- Plugin manager: **zinit** (turbo-mode). Cold-start measured at ~55 ms on ld5 (target < 150 ms).
+- Modular `~/.zshrc.d/00-path.zsh … 90-starship.zsh` + `95-pane-log.zsh` (from observability phase).
+- Turbo plugins: `zsh-autosuggestions`, `fast-syntax-highlighting`, `zsh-completions`, `fzf-tab`.
+- Eval-init: starship, atuin (cloud sync), zoxide, direnv, carapace-bin (deferred to first precmd).
+- Completion layering: builtins → zsh-completions → tool-native → bashcompinit bridge → carapace-bin.
+
+**CLI binaries** (all via `bin/install-user-bins.sh`, user-local to `~/.local/bin/`, no tdnf):
+atuin 18.15.2, bat 0.26.1, btop 1.4.6, carapace 1.6.4, delta 0.19.2, difft 0.68.0,
+direnv 2.37.1, duf 0.9.1, dust 1.2.4, eza 0.23.4, fd 10.4.2, fzf 0.71.0, gh 2.90.0,
+gh-dash 4.23.2, git-absorb 0.9.0, git-branchless 0.10.0, git-who 1.3, hyperfine 1.20.0,
+jq 1.8.1, just 1.50.0, lazygit 0.61.1, onefetch 2.21.0 (newer needs GLIBC 2.39),
+procs 0.14.11, rg 15.1.0, scc 3.7.0, sd 1.1.0, spr 0.17.5, starship 1.25.0,
+tldr 1.8.1, vhs 0.11.0, watchexec 2.5.1, yazi 26.1.22, yq 4.53.2, zoxide 0.9.9,
+asciinema 3.2.0.
+
+**Neovim:** both distros via `NVIM_APPNAME` isolation.
+- `nvim` → NvChad v2.5 (config at `config/nvim/`, overrides in `lua/chadrc.lua`, `lua/plugins/init.lua`, `lua/mappings.lua`).
+- `lv` → LazyVim (config at `config/nvim-lazy/`, overrides in `lua/plugins/user.lua`).
+- nvim 0.12.1 AppImage at `~/.local/bin/nvim` (FUSE unavailable on ld5 — installer used `--appimage-extract`).
+
+**Configs:** `config/atuin/config.toml` (cloud sync + Ctrl-R rewire),
+`config/starship.toml` (two-line prompt, git modules on, language prompts off),
+`config/nvim/lua/*` (NvChad overrides), `config/nvim-lazy/lua/plugins/user.lua` (LazyVim overrides).
+
+**No tdnf calls anywhere** — every binary lands via `install-user-bins.sh` from upstream GitHub releases. Zero sudo prompts.
+
+**Spec-vs-reality deviations absorbed into install-user-bins.sh** (full notes in execution log):
+atuin/yazi → musl (glibc 2.38 vs 2.39); gh-dash/asciinema → single-file; git-absorb/branchless → musl only;
+git-who asset is `gitwho_*` (no hyphen); btop has `-unknown-` segment; spr binary is `git-spr`;
+onefetch pinned 2.21.0.
+
+**Generic fetcher enhancements** to `bin/install-user-bins.sh`: optional 6th `register` arg for tag template,
+`{v}`/`{V}` substitution extended to `bin_in_archive`, `*.tar.bz2|*.tbz` support.
+
+**Known non-fatal gaps:** LazyVim treesitter parser builds fail on host (bundled tree-sitter CLI needs GLIBC 2.39);
+LazyVim falls back to prebuilt parsers on first interactive open. Several tools (eza, gh-dash, sd, git-branchless, spr)
+re-install on every run because their `--version` output doesn't match the fetcher's semver regex — harmless.
+
 ## 2026-04-21 — Observability phase (branch: power-tui)
 
 Comprehensive observability substrate landed on branch `power-tui` per

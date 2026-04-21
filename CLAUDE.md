@@ -52,6 +52,7 @@ dotfiles/
 | `bin/pane-log-toggle.sh` / `bin/pane-log-mode.sh` | Per-pane (prefix+L) and global (prefix+M-L) tmux logging controls |
 | `bin/lfs-template-apply` | Idempotent `.gitattributes` LFS template copier for target repos |
 | `bin/lint-shell.sh` | shellcheck wrapper over bin/ + tests/ |
+| `bin/install-user-bins.sh` | Unified idempotent installer for all user-local CLI binaries (zsh via zsh-bin, nvim AppImage, ~35 Rust/Go binaries). No tdnf, no sudo. Version-pinned. |
 
 ## Architecture Decisions
 

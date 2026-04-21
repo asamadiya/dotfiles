@@ -1,0 +1,19 @@
+# ~/.config/atuin/config.toml
+# Managed via dotfiles. `atuin register` / `atuin login` run once per host;
+# no credentials committed here.
+
+auto_sync = true
+sync_frequency = "5m"
+sync_address = "https://api.atuin.sh"
+
+update_check = false
+
+filter_mode_shell_up_key = "session"
+search_mode = "fuzzy"
+dialect = "us"
+style = "compact"
+show_preview = true
+inline_height = 20
+
+[keys]
+exit_past_line_start = true

@@ -1,0 +1,30 @@
+# shell/zshrc — interactive zsh config.
+# Sourced after ~/.zshenv. Fast path: < 150 ms cold start (measured via
+# `time zsh -ic exit`). Heavy work goes through zinit turbo (loads after
+# first prompt).
+
+# --- zinit bootstrap ---------------------------------------------------------
+ZINIT_HOME="${XDG_DATA_HOME:-$HOME/.local/share}/zinit/zinit.git"
+if [[ ! -d "$ZINIT_HOME" ]]; then
+  print -P "%F{33}Installing zinit...%f"
+  mkdir -p "$(dirname "$ZINIT_HOME")"
+  git clone --depth 1 https://github.com/zdharma-continuum/zinit.git "$ZINIT_HOME"
+fi
+source "$ZINIT_HOME/zinit.zsh"
+
+# --- turbo-loaded plugins (load AFTER first prompt) -------------------------
+zinit wait lucid for \
+  atinit"zicompinit; zicdreplay" \
+    zdharma-continuum/fast-syntax-highlighting \
+  atload"_zsh_autosuggest_start" \
+    zsh-users/zsh-autosuggestions \
+  blockf atpull'zinit creinstall -q .' \
+    zsh-users/zsh-completions \
+  Aloxaf/fzf-tab
+
+# --- source modular config (~/.zshrc.d/*.zsh in lex order) ------------------
+if [[ -d "$HOME/.zshrc.d" ]]; then
+  for f in "$HOME/.zshrc.d"/*.zsh(N); do
+    [[ -r "$f" ]] && source "$f"
+  done
+fi

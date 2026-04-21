@@ -1,0 +1,7 @@
+# shell/zshenv — loaded for every zsh invocation (interactive + non-interactive).
+# Keep this minimal: PATH + EDITOR only. Everything else belongs in zshrc.
+
+# Source cross-shell env
+if [[ -f "$HOME/my_stuff/dotfiles/shell/shared.sh" ]]; then
+  source "$HOME/my_stuff/dotfiles/shell/shared.sh"
+fi

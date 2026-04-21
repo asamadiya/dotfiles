@@ -186,3 +186,47 @@ Auto-adds binaries to Git LFS by extension. Aborts loudly on secret regex (`ghp_
 `~/lin_code/state/` holds Claude/Copilot sessions, atuin history (age-encrypted), tmux-resurrect dumps, tmux log rollups, per-host inventories. Hourly via `systemd --user state-snapshot.timer`. **Commit-only — never pushes.** Encryption is asymmetric age (identity at `~/.config/age/state-identity.txt`, mode 600, generated once via `age-keygen`).
 
 For the full design rationale see `docs/superpowers/specs/2026-04-19-observability-design.md`. For daily workflows see `docs/guides/2026-04-19-observability-user-guide.md`.
+
+## Productivity (power-productivity phase)
+
+### Shell
+- Interactive shell in tmux: **zsh** (installed via `romkatv/zsh-bin` to `~/.local/bin/zsh`, no sudo).
+- Login shell: unchanged (bash).
+- Plugin manager: **zinit** (turbo-mode). Config under `shell/zshrc` + modular `shell/zshrc.d/*.zsh`.
+- Turbo-loaded plugins: `zsh-autosuggestions`, `fast-syntax-highlighting`, `zsh-completions`, `fzf-tab`.
+- Completion layers: zsh builtins → zsh-completions → tool-native → `bashcompinit` → **carapace-bin**.
+- Eval-init: `starship`, `zoxide`, `atuin`, `direnv`, `carapace` (deferred to first prompt).
+- Cold start: ~55 ms (target < 150 ms).
+
+### CLI tools (one-shot install)
+`bin/install-user-bins.sh` installs ~35 static binaries into `~/.local/bin/`:
+zsh · nvim · atuin · bat · btop · carapace-bin · delta · difft · duf · dust ·
+eza · fd · fzf · gh · gh-dash · git-absorb · git-branchless · git-who ·
+hyperfine · jq · just · lazygit · onefetch · procs · rg · scc · sd · spr ·
+starship · tldr · vhs · watchexec · yazi · zoxide · direnv · yq · asciinema.
+Idempotent; `--force` to re-install.
+
+### Neovim
+Two distros coexist via `NVIM_APPNAME`:
+- `nvim` → **NvChad** (default). Config at `config/nvim/` (edits in `lua/chadrc.lua`, `lua/plugins/init.lua`, `lua/mappings.lua`).
+- `lv` → **LazyVim** (fallback). Config at `config/nvim-lazy/` (extras in `lua/plugins/user.lua`).
+
+Both get: catppuccin theme, LSP (pyright, rust-analyzer, gopls, lua_ls, bashls,
+yamlls, jsonls, marksman), treesitter, telescope, gitsigns, lazygit.nvim, oil,
+which-key, trouble.
+
+Key bindings (leader = `<space>`): `<leader>ff` files, `<leader>fg` grep,
+`<leader>gg` lazygit, `<leader>e` oil file manager, `<leader>xx` trouble.
+
+### Atuin cloud sync
+
+```bash
+atuin register -u <username> -e <email>   # first host only
+atuin login -u <username>                  # each subsequent host
+atuin sync
+```
+
+### Spec / plan / user guide
+- Spec: `docs/superpowers/specs/2026-04-21-productivity-design.md`
+- Plan: `docs/superpowers/plans/2026-04-21-productivity.md`
+- User guide: `docs/guides/2026-04-21-productivity-user-guide.md`

@@ -29,8 +29,27 @@ link "$DOTFILES/shell/bashrc"        "$HOME/.bashrc"
 link "$DOTFILES/shell/bash_profile"  "$HOME/.bash_profile"
 link "$DOTFILES/shell/profile"       "$HOME/.profile"
 link "$DOTFILES/shell/inputrc"       "$HOME/.inputrc"
-mkdir -p "$HOME/.zshrc.d"
-link "$DOTFILES/shell/zshrc.d/95-pane-log.zsh" "$HOME/.zshrc.d/95-pane-log.zsh"
+
+echo "=== Zsh ==="
+link "$DOTFILES/shell/zshenv"  "$HOME/.zshenv"
+link "$DOTFILES/shell/zshrc"   "$HOME/.zshrc"
+# zshrc.d is a directory (not a single file) — replace any prior symlink.
+rm -f "$HOME/.zshrc.d" 2>/dev/null
+ln -sfn "$DOTFILES/shell/zshrc.d" "$HOME/.zshrc.d"
+
+echo "=== Atuin ==="
+mkdir -p "$HOME/.config/atuin"
+link "$DOTFILES/config/atuin/config.toml" "$HOME/.config/atuin/config.toml"
+
+echo "=== Neovim ==="
+mkdir -p "$HOME/.config"
+rm -rf "$HOME/.config/nvim" 2>/dev/null
+ln -sfn "$DOTFILES/config/nvim"      "$HOME/.config/nvim"
+rm -rf "$HOME/.config/nvim-lazy" 2>/dev/null
+ln -sfn "$DOTFILES/config/nvim-lazy" "$HOME/.config/nvim-lazy"
+
+echo "=== User-local binaries ==="
+bash "$DOTFILES/bin/install-user-bins.sh"
 
 echo "=== Vim ==="
 link "$DOTFILES/vim/vimrc"           "$HOME/.vimrc"
