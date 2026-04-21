@@ -1,0 +1,17 @@
+{
+  "color": true,
+  "useUnicode": true,
+  "maxWidth": 140,
+  "display": {
+    "showModel": false,
+    "showPromptLabel": false,
+    "showProject": true,
+    "showGit": true,
+    "showUsage": true,
+    "showTiming": true,
+    "showTools": false,
+    "showAgents": true,
+    "maxTools": 2,
+    "maxAgents": 2
+  }
+}

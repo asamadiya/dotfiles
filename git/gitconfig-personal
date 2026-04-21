@@ -1,0 +1,7 @@
+[user]
+    name = asamadiya
+    email = asamadiya@users.noreply.github.com
+    signingkey =
+
+[commit]
+    gpgsign = false

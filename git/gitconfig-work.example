@@ -1,0 +1,9 @@
+# Copy to ~/.gitconfig-work on each work host and replace __WORK_EMAIL__ with the
+# real LinkedIn email. This file is a template only; the real file is gitignored.
+
+[user]
+    name = __WORK_NAME__
+    email = __WORK_EMAIL__
+
+[commit]
+    gpgsign = false

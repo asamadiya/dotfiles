@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# Thin wrapper around `copilot` that runs session-end-autocommit on exit.
+# wt copilot routes through this; direct `copilot` users can alias it
+# to this wrapper in their shell rc.
+
+set -eu
+
+# Snapshot cwd so we autocommit in the dir the user launched from, not
+# a subshell cd.
+LAUNCH_DIR=$PWD
+
+cleanup() {
+  local ec=$?
+  # best-effort session id from copilot session-state inuse lock of *our* pid
+  local sid=unknown
+  local pat="$HOME/.copilot/session-state/*/inuse.$$.lock"
+  for lock in $pat; do
+    [[ -e "$lock" ]] || continue
+    sid=$(basename "$(dirname "$lock")")
+    break
+  done
+  (cd "$LAUNCH_DIR" && "$HOME/bin/session-end-autocommit.sh" copilot "$sid") || true
+  exit $ec
+}
+trap cleanup EXIT INT TERM
+
+exec copilot "$@"

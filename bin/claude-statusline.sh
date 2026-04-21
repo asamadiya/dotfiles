@@ -6,17 +6,21 @@
 INPUT=$(cat)
 
 # Parse fields from JSON
-MODEL=$(echo "$INPUT" | jq -r '.model.display_name // "Claude"' 2>/dev/null)
-DIR=$(echo "$INPUT" | jq -r '.workspace.current_dir // empty' 2>/dev/null)
+MODEL=$(jq -r '.model.display_name // "Claude"' <<<"$INPUT" 2>/dev/null)
+DIR=$(jq -r '.workspace.current_dir // empty' <<<"$INPUT" 2>/dev/null)
 DIR=${DIR:-$(pwd)}
 DIRNAME=$(basename "$DIR")
-REMAINING=$(echo "$INPUT" | jq -r '.context_window.remaining_percentage // empty' 2>/dev/null)
-COST=$(echo "$INPUT" | jq -r '.estimated_cost // empty' 2>/dev/null)
+REMAINING=$(jq -r '.context_window.remaining_percentage // empty' <<<"$INPUT" 2>/dev/null)
+COST=$(jq -r '.estimated_cost // empty' <<<"$INPUT" 2>/dev/null)
 
-# Git branch (fast, no fork if not in repo)
+# Git branch + dirty glyph (fast, no fork if not in repo)
 BRANCH=""
+DIRTY=""
 if [ -d "$DIR/.git" ] || git -C "$DIR" rev-parse --git-dir &>/dev/null; then
     BRANCH=$(git -C "$DIR" branch --show-current 2>/dev/null)
+    if [ -n "$(git -C "$DIR" status --porcelain 2>/dev/null | head -1)" ]; then
+        DIRTY="*"
+    fi
 fi
 
 # GPU utilization (cached, refreshed every 10s)
@@ -27,7 +31,7 @@ fi
 GPU=$(cat "$GPU_CACHE" 2>/dev/null)
 
 # Load average (1min)
-LOAD=$(cat /proc/loadavg 2>/dev/null | cut -d' ' -f1)
+LOAD=$(cut -d' ' -f1 /proc/loadavg 2>/dev/null)
 
 # Context bar (10 segments, color-coded)
 CTX=""
@@ -63,7 +67,7 @@ fi
 
 # Build output
 OUT="\033[2m${MODEL}\033[0m"
-[ -n "$BRANCH" ] && OUT="${OUT} \033[36m${BRANCH}\033[0m"
+[ -n "$BRANCH" ] && OUT="${OUT} \033[36m${BRANCH}${DIRTY}\033[0m"
 OUT="${OUT} \033[2m${DIRNAME}\033[0m"
 [ -n "$GPU" ] && OUT="${OUT} \033[35m${GPU}\033[0m"
 [ -n "$LOAD" ] && OUT="${OUT} \033[2mL:${LOAD}\033[0m"

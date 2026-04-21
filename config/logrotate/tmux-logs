@@ -1,0 +1,8 @@
+/home/*/logs/tmux/*/*/*/*.log {
+    daily
+    rotate 30
+    compress
+    missingok
+    notifempty
+    copytruncate
+}

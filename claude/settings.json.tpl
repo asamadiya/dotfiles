@@ -128,6 +128,17 @@
           }
         ]
       }
+    ],
+    "SessionEnd": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "__HOME__/bin/session-end-autocommit.sh claude ${CLAUDE_CODE_SESSION:-unknown}"
+          }
+        ]
+      }
     ]
   },
   "statusLine": {

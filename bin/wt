@@ -1,0 +1,219 @@
+#!/usr/bin/env bash
+# wt — worktree orchestrator scoped to ~/lin_code/. See spec §6.3.
+#
+# Subcommands (this task):  add  ls  jump  prune
+# Subcommands (task 11):    claude  copilot  (--record variants)
+# Subcommands (task 12):    stack  submit  sl
+#
+# Layout: ~/lin_code/wt/<repo>/<branch>/
+# Refuses to run unless cwd (or --repo arg) is inside ~/lin_code/.
+
+set -euo pipefail
+
+WT_ROOT="$HOME/lin_code/wt"
+WORK_ROOT="$HOME/lin_code"
+
+die()  { echo "wt: $*" >&2; exit 1; }
+warn() { echo "wt: $*" >&2; }
+
+# --- work-only enforcement ---------------------------------------------------
+enforce_work_scope() {
+  local repo_root=$1
+  [[ "$(realpath "$repo_root")" == "$WORK_ROOT"/* ]] || \
+    die "wt only operates under $WORK_ROOT (got: $repo_root)"
+}
+
+find_repo_root() {
+  # Walk up to find .git dir.
+  local dir=$PWD
+  while [[ "$dir" != "/" ]]; do
+    if [[ -d "$dir/.git" || -f "$dir/.git" ]]; then
+      echo "$dir"
+      return 0
+    fi
+    dir=$(dirname "$dir")
+  done
+  die "not inside a git repo"
+}
+
+# --- subcommand: add ---------------------------------------------------------
+sub_add() {
+  local branch="${1:-}"
+  [[ -n "$branch" ]] || die "usage: wt add <branch>"
+
+  local repo_root repo_name
+  repo_root=$(find_repo_root)
+  enforce_work_scope "$repo_root"
+  repo_name=$(basename "$repo_root")
+
+  local dest="$WT_ROOT/$repo_name/$branch"
+  mkdir -p "$(dirname "$dest")"
+
+  if [[ -d "$dest" ]]; then
+    warn "worktree already exists at $dest; reusing"
+  else
+    # Create branch if missing.
+    if ! git -C "$repo_root" rev-parse --verify "$branch" >/dev/null 2>&1; then
+      git -C "$repo_root" worktree add -b "$branch" "$dest"
+    else
+      git -C "$repo_root" worktree add "$dest" "$branch"
+    fi
+  fi
+
+  # Open a tmux window named <repo>/<branch>, cd'd into dest.
+  if [[ -n "${TMUX:-}" ]]; then
+    tmux new-window -n "$repo_name/$branch" -c "$dest"
+  fi
+
+  echo "$dest"
+}
+
+# --- subcommand: ls ----------------------------------------------------------
+sub_ls() {
+  [[ -d "$WT_ROOT" ]] || return 0
+  find "$WT_ROOT" -mindepth 2 -maxdepth 2 -type d | while read -r d; do
+    local b; b=$(git -C "$d" branch --show-current 2>/dev/null || echo '?')
+    local last; last=$(git -C "$d" log -1 --format='%h %s' 2>/dev/null || echo '?')
+    local dirty; dirty=$(git -C "$d" status --porcelain 2>/dev/null | head -1)
+    local flag='clean'; [[ -n "$dirty" ]] && flag='dirty'
+    printf '%-50s %-20s %-6s %s\n' "$d" "$b" "$flag" "$last"
+  done
+}
+
+# --- subcommand: jump --------------------------------------------------------
+sub_jump() {
+  command -v fzf >/dev/null || die "jump requires fzf (install via productivity phase)"
+  local pick
+  pick=$(sub_ls | fzf --header='pick worktree')
+  [[ -n "$pick" ]] || exit 0
+  local path; path=$(awk '{print $1}' <<< "$pick")
+  local repo; repo=$(basename "$(dirname "$path")")
+  local br;  br=$(basename "$path")
+  if [[ -n "${TMUX:-}" ]]; then
+    tmux select-window -t "$repo/$br" 2>/dev/null || tmux new-window -n "$repo/$br" -c "$path"
+  else
+    echo "cd $path"
+  fi
+}
+
+# --- subcommand: prune -------------------------------------------------------
+sub_prune() {
+  [[ -d "$WT_ROOT" ]] || return 0
+  find "$WT_ROOT" -mindepth 2 -maxdepth 2 -type d | while read -r d; do
+    local br; br=$(git -C "$d" branch --show-current 2>/dev/null) || continue
+    local repo_root; repo_root=$(git -C "$d" rev-parse --show-toplevel 2>/dev/null) || continue
+    local main_wd; main_wd="$WORK_ROOT/$(basename "$(dirname "$d")")"
+    local main_ref; main_ref=$(git -C "$main_wd" symbolic-ref --short HEAD 2>/dev/null) || main_ref=master
+    # If branch is merged into main, offer to prune.
+    if git -C "$main_wd" merge-base --is-ancestor "$br" "$main_ref" 2>/dev/null; then
+      read -r -p "remove merged worktree $d ($br → $main_ref)? [y/N] " ans
+      if [[ "$ans" =~ ^[Yy]$ ]]; then
+        git -C "$main_wd" worktree remove --force "$d"
+      fi
+    fi
+  done
+  # Also clean up admin metadata for deleted ones.
+  for repo in "$WORK_ROOT"/*/; do
+    if [[ -d "$repo/.git" ]]; then
+      git -C "$repo" worktree prune 2>/dev/null || true
+    fi
+  done
+}
+
+# --- agent subcommands -------------------------------------------------------
+launch_agent() {
+  # launch_agent <claude|copilot> <branch> [--record]
+  local agent=$1 branch=$2; shift 2
+  local record=0
+  for a in "$@"; do [[ "$a" == "--record" ]] && record=1; done
+
+  local dest; dest=$(sub_add "$branch")
+
+  local cmd
+  case "$agent" in
+    claude)  cmd="claude --dangerously-skip-permissions" ;;
+    copilot) cmd="$HOME/bin/copilot-with-autocommit --allow-all-tools" ;;
+    *) die "unknown agent: $agent" ;;
+  esac
+
+  if (( record )); then
+    local cast
+    cast="/tmp/wt-${agent}-$(date +%s).cast"
+    cmd="asciinema rec --quiet $cast -c \"$cmd\""
+    # TODO(user-guide): asciinema completion moves the cast into the state repo;
+    # session-end-autocommit handles this via trap EXIT on the copilot launcher.
+  fi
+
+  if [[ -n "${TMUX:-}" ]]; then
+    local repo; repo=$(basename "$(dirname "$dest")")
+    tmux new-window -n "$repo/$branch" -c "$dest" "$cmd"
+  else
+    cd "$dest" && eval "$cmd"
+  fi
+}
+
+sub_claude()  { launch_agent claude  "$@"; }
+sub_copilot() { launch_agent copilot "$@"; }
+
+# --- stack subcommands (require spr and/or git-branchless) -------------------
+sub_stack() {
+  local base="${1:-master}"
+  local repo_root; repo_root=$(find_repo_root); enforce_work_scope "$repo_root"
+  local dest; dest=$(sub_add "$base-stack-$(date +%s)")
+  if command -v spr >/dev/null; then
+    (cd "$dest" && spr track)
+  else
+    warn "spr not installed; skipping spr track"
+  fi
+}
+
+sub_submit() {
+  local repo_root; repo_root=$(find_repo_root); enforce_work_scope "$repo_root"
+  if command -v spr >/dev/null; then
+    spr diff "$@"
+  else
+    die "spr not installed — install in productivity phase"
+  fi
+}
+
+sub_sl() {
+  local repo_root; repo_root=$(find_repo_root); enforce_work_scope "$repo_root"
+  if command -v git-branchless >/dev/null || git config --get branchless.core.mainBranch >/dev/null 2>&1; then
+    git sl
+  else
+    warn "git-branchless not installed; falling back to git log --graph"
+    git log --graph --oneline --all --decorate "$@"
+  fi
+}
+
+# --- dispatch ----------------------------------------------------------------
+cmd="${1:-}"; shift || true
+case "$cmd" in
+  add)    sub_add   "$@" ;;
+  ls)     sub_ls    "$@" ;;
+  jump)   sub_jump  "$@" ;;
+  prune)  sub_prune "$@" ;;
+  claude)  sub_claude  "$@" ;;
+  copilot) sub_copilot "$@" ;;
+  stack)  sub_stack  "$@" ;;
+  submit) sub_submit "$@" ;;
+  sl)     sub_sl     "$@" ;;
+  -h|--help|'') cat <<'EOF'
+wt — worktree orchestrator for ~/lin_code/ (work-only)
+
+Usage:
+  wt add <branch>       create worktree at ~/lin_code/wt/<repo>/<branch>/
+  wt ls                 list worktrees with branch/dirty/last-commit
+  wt jump               fzf-pick a worktree, open in tmux window
+  wt prune              remove merged worktrees (interactive)
+  wt claude <branch> [--record]   add worktree + launch Claude YOLO
+  wt copilot <branch> [--record]  add worktree + launch Copilot YOLO
+  wt stack <base>       add a stacked worktree, spr track (if installed)
+  wt submit             spr diff → push stacked PRs (requires spr)
+  wt sl                 git-branchless stacked log (fallback: git log --graph)
+
+Further subcommands (claude/copilot/stack/...) land in later tasks.
+EOF
+  ;;
+  *) die "unknown subcommand: $cmd (try: wt --help)";;
+esac

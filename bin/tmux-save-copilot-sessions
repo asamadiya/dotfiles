@@ -1,0 +1,92 @@
+#!/usr/bin/env bash
+# Post-save hook for tmux-resurrect: map panes running `copilot` to their
+# Copilot CLI session UUIDs and rewrite the saved command line so restore
+# resumes the exact session.
+#
+# Mirror of bin/tmux-save-claude-sessions (same repo).
+
+set -eu
+
+RESURRECT_DIR="$HOME/.tmux/resurrect"
+LAST="$RESURRECT_DIR/last"
+SESSION_STATE="$HOME/.copilot/session-state"
+
+[[ -L "$LAST" && -f "$LAST" ]] || exit 0
+[[ -d "$SESSION_STATE" ]] || exit 0
+
+# Build PID → session-uuid map from inuse.*.lock files.
+declare -A PID_TO_UUID
+for lock in "$SESSION_STATE"/*/inuse.*.lock; do
+  [[ -e "$lock" ]] || continue
+  uuid=$(basename "$(dirname "$lock")")
+  fname=$(basename "$lock")             # inuse.<pid>.lock
+  pid=${fname#inuse.}; pid=${pid%.lock}
+  [[ "$pid" =~ ^[0-9]+$ ]] || continue
+  PID_TO_UUID[$pid]=$uuid
+done
+
+(( ${#PID_TO_UUID[@]} )) || exit 0
+
+# tmux list-panes: pane_pid + pane_id.
+declare -A PANE_TO_UUID
+while IFS=' ' read -r pane_pid pane_id; do
+  # Walk up /proc/<pid>/status PPid chain looking for a known copilot pid.
+  pid=$pane_pid
+  for _ in 1 2 3 4 5; do
+    if [[ -n "${PID_TO_UUID[$pid]:-}" ]]; then
+      PANE_TO_UUID[$pane_id]=${PID_TO_UUID[$pid]}
+      break
+    fi
+    # Iterate through child pids of pane_pid too (shell children).
+    for child in $(pgrep -P "$pid" 2>/dev/null); do
+      if [[ -n "${PID_TO_UUID[$child]:-}" ]]; then
+        PANE_TO_UUID[$pane_id]=${PID_TO_UUID[$child]}
+        break 2
+      fi
+    done
+    ppid=$(awk '/^PPid:/{print $2}' "/proc/$pid/status" 2>/dev/null || true)
+    [[ -z "$ppid" || "$ppid" == 0 ]] && break
+    pid=$ppid
+  done
+done < <(tmux list-panes -a -F '#{pane_pid} #{pane_id}')
+
+(( ${#PANE_TO_UUID[@]} )) || exit 0
+
+# Write a backup map + rewrite the resurrect save file in-place.
+MAP_FILE="$RESURRECT_DIR/copilot-sessions.txt"
+: > "$MAP_FILE"
+for pane in "${!PANE_TO_UUID[@]}"; do
+  printf '%s %s\n' "$pane" "${PANE_TO_UUID[$pane]}" >> "$MAP_FILE"
+done
+
+TARGET=$(readlink -f "$LAST")
+TMP="${TARGET}.tmp"
+
+# Rewrite: for each pane line that has command == "copilot", splice the --resume flag.
+# Resurrect pane line format (tab-separated):
+#   pane\t<session>\t<win_idx>\t...\t<pane_id>\t...\t<command>\t...
+awk -v OFS='\t' -v map_file="$MAP_FILE" '
+  BEGIN {
+    while ((getline line < map_file) > 0) {
+      n = split(line, a, " ")
+      if (n == 2) M[a[1]] = a[2]
+    }
+  }
+  /^pane/ {
+    # Find the pane_id field (last numeric column matching %N) and command field.
+    # Easiest: scan for a "%N" token — resurrect keeps it.
+    pane_id = ""
+    for (i=1; i<=NF; i++) if ($i ~ /^%[0-9]+$/) pane_id = $i
+    if (pane_id in M) {
+      # The command is the last field; normalize to include --resume and --allow-all-tools.
+      cmd = $NF
+      if (cmd == "copilot" || cmd ~ /^copilot($| )/) {
+        $NF = "copilot --resume=" M[pane_id] " --allow-all-tools"
+      }
+    }
+    print; next
+  }
+  { print }
+' "$TARGET" > "$TMP"
+
+mv "$TMP" "$TARGET"

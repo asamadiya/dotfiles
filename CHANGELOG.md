@@ -1,5 +1,43 @@
 # Changelog
 
+## 2026-04-21 — Observability phase (branch: power-tui)
+
+Comprehensive observability substrate landed on branch `power-tui` per
+`docs/superpowers/specs/2026-04-19-observability-design.md` +
+`docs/superpowers/plans/2026-04-19-observability.md`. Execution log at
+`docs/superpowers/logs/2026-04-21-observability-execution.md`.
+
+**New scripts:**
+- `bin/sysstat.sh` — unified tmux status segment (CPU%/MEM/DISK/GPU/load)
+- `bin/nvidia-daemon.sh` — background GPU telemetry writer
+- `bin/tmux-save-copilot-sessions`, `bin/tmux-copilot-restore` — Copilot resurrect pair (parity with Claude)
+- `bin/wt` — worktree orchestrator for `~/lin_code/` (add/ls/jump/prune/claude/copilot/stack/submit/sl, work-only enforcement)
+- `bin/session-end-autocommit.sh` — Claude/Copilot SessionEnd hook (LFS detection + secret-pattern abort, commit-only, no push, no Co-Authored-By)
+- `bin/copilot-with-autocommit` — Copilot launcher wrapper with `trap EXIT` session-end hook
+- `bin/state-snapshot.sh` — hourly state-repo snapshot (asymmetric-age encryption, LFS, secret-abort)
+- `bin/pane-log-toggle.sh` / `bin/pane-log-mode.sh` — per-pane and global tmux logging controls
+- `bin/lfs-template-apply`, `bin/lint-shell.sh`
+
+**New systemd units:** `nvidia-daemon.service`, `state-snapshot.service` + `state-snapshot.timer` (hourly, Persistent).
+
+**New configs:** `config/gitattributes-lfs-template`, `config/logrotate/tmux-logs`, `config/copilot/statusline-settings.json`, `git/gitconfig-personal`, `git/gitconfig-work.example`, `shell/zshrc.d/95-pane-log.zsh`.
+
+**tmux config changes:** sysstat segment replaces host-health; `status-interval 5`; `set-clipboard on`; copilot resurrect-processes entry; wt keybindings (`prefix+w/W/C-c/C-p`); pane-logging keybindings (`prefix+L`, `prefix+M-L`).
+
+**Claude Code config:** `SessionEnd` hook added.
+
+**Two-identity git config:** `includeIf` swaps `~/.gitconfig-personal` for `~/my_stuff/` and `~/.gitconfig-work` for `~/lin_code/`.
+
+**Retired:** `bin/host-health.sh` (superseded by `sysstat.sh`).
+
+**Design decisions captured during execution:**
+- `age -p` requires `/dev/tty`, so state-snapshot encryption pivoted from symmetric passphrase to **asymmetric age** using an identity file at `~/.config/age/state-identity.txt` (mode 600, gitignored). Decryption: `age -d -i ~/.config/age/state-identity.txt <file>.age`.
+- Per-repo `git lfs install` is NOT required — both the session-end hook and state-snapshot detect binaries at commit time and run `git lfs track "*.<ext>"` on demand. Install the `git-lfs` binary once per host (tdnf).
+- All auto-commits stay LOCAL; the user pushes manually to prevent half-baked work reaching PR-linked branches.
+- MEM colorize in `sysstat.sh` uses used% thresholds (75/90) rather than the plan's inverted `100 - used%` trick — the inversion painted RED at 3% used.
+
+**Test infra:** bats-core + shellcheck (static binary to `~/.local/bin/` — AzL3 tdnf doesn't ship shellcheck). `bin/lint-shell.sh` wraps shellcheck over `bin/` and `tests/`. ~20 new bats tests across sysstat, lfs-template-apply, session-end-autocommit, wt-core, tmux-save-copilot, state-snapshot.
+
 ## 2026-04-19 — Host-health status segment
 
 Added `bin/host-health.sh` and a managed block in `tmux/tmux.conf.local.tpl`

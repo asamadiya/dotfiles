@@ -39,9 +39,19 @@ dotfiles/
 | `sync.sh` | `--push` (repo->live), no args (live->repo + diff), `--commit` (live->repo + commit) |
 | `bin/tmux-claude-restore` | Resurrect inline strategy — resumes claude sessions by ID |
 | `bin/tmux-save-claude-sessions` | Post-save hook — maps panes to claude session IDs |
-| `bin/claude-statusline.sh` | Statusline: model, git branch, GPU, load, cost, context bar |
+| `bin/tmux-copilot-restore` | Resurrect inline strategy — resumes copilot sessions by ID (unsets COPILOT_* env leaks, cleans stale locks) |
+| `bin/tmux-save-copilot-sessions` | Post-save hook — maps panes to copilot session IDs, rewrites saved cmd to include `--resume=<uuid> --allow-all-tools` |
+| `bin/claude-statusline.sh` | Statusline: model, git branch + dirty glyph, GPU, load, cost, context bar |
 | `bin/claude-guard-main.sh` | PreToolUse hook — blocks Edit/Write on main/master branch |
-| `bin/host-health.sh` | tmux status segment: 1-min load + MemAvailable with color escalation (gray→yellow→red) |
+| `bin/sysstat.sh` | Unified tmux status segment: CPU%/MEM/DISK/GPU/load with per-metric color escalation |
+| `bin/nvidia-daemon.sh` | systemd --user service caching nvidia-smi telemetry to /tmp/nvidia-stats (silent if driver absent) |
+| `bin/wt` | Worktree orchestrator for ~/lin_code/ (add/ls/jump/prune + claude/copilot YOLO launch + stack/submit/sl) |
+| `bin/session-end-autocommit.sh` | Claude/Copilot SessionEnd hook — LFS detection + secret-pattern abort, commit-only, no push, no Co-Authored-By |
+| `bin/copilot-with-autocommit` | Thin `copilot` wrapper — trap EXIT runs session-end-autocommit.sh |
+| `bin/state-snapshot.sh` | Hourly state-repo snapshot — rsync + asymmetric-age encryption (identity file) + LFS + secret-abort, commit-only |
+| `bin/pane-log-toggle.sh` / `bin/pane-log-mode.sh` | Per-pane (prefix+L) and global (prefix+M-L) tmux logging controls |
+| `bin/lfs-template-apply` | Idempotent `.gitattributes` LFS template copier for target repos |
+| `bin/lint-shell.sh` | shellcheck wrapper over bin/ + tests/ |
 
 ## Architecture Decisions
 
@@ -66,6 +76,6 @@ dotfiles/
 ## Workflow
 
 - IMPORTANT: Be terse. No hand-holding. Lead with code.
-- IMPORTANT: This repo is on the `main` branch — the guard hook blocks Edit/Write. Use bash/sed for edits or work on a feature branch.
+- IMPORTANT: On `main`/`master` the guard hook blocks Edit/Write. Use bash/sed for edits or work on a feature branch (e.g., `power-tui`).
 - Run `sync.sh` to pull live changes, `sync.sh --commit` to commit them
 - Run `sync.sh --push` to deploy repo state to live system

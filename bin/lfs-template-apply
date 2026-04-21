@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# Copy the dotfiles LFS .gitattributes template into the target repo, merging with
+# any existing rules (idempotent: appends only missing patterns).
+#
+# Usage: bin/lfs-template-apply <repo-path>
+#
+# Does NOT run `git lfs install` per spec §7.4 — commit-time detection handles that.
+
+set -euo pipefail
+
+repo="${1:-}"
+[[ -n "$repo" ]] || { echo "usage: lfs-template-apply <repo-path>" >&2; exit 2; }
+[[ -d "$repo/.git" ]] || { echo "not a git repo: $repo" >&2; exit 2; }
+
+src="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/config/gitattributes-lfs-template"
+[[ -f "$src" ]] || { echo "template missing: $src" >&2; exit 2; }
+
+dst="$repo/.gitattributes"
+touch "$dst"
+
+added=0
+while IFS= read -r line; do
+  [[ -z "$line" || "$line" =~ ^# ]] && continue
+  if ! grep -qxF "$line" "$dst"; then
+    printf '%s\n' "$line" >> "$dst"
+    added=$((added + 1))
+  fi
+done < "$src"
+
+echo "lfs-template-apply: added $added new patterns to $dst"

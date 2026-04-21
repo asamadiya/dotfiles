@@ -74,3 +74,9 @@
 [credential "https://gist.github.com"]
     helper =
     helper = !/usr/bin/gh auth git-credential
+
+[includeIf "gitdir:~/my_stuff/"]
+    path = ~/.gitconfig-personal
+
+[includeIf "gitdir:~/lin_code/"]
+    path = ~/.gitconfig-work

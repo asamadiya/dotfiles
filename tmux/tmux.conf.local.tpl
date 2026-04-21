@@ -95,6 +95,12 @@ set -g status-keys vi
 # Mouse
 set -g mouse on
 
+# Tighter refresh for livelier CPU% + MEM signals in the sysstat segment
+set -g status-interval 5
+
+# Explicit OSC 52 propagation so yank-to-clipboard reaches Mac terminal
+set -g set-clipboard on
+
 # History
 set -g history-limit 50000
 
@@ -145,8 +151,8 @@ set -g @plugin 'tmux-plugins/tmux-continuum'
 set -g @resurrect-capture-pane-contents 'on'
 set -g @resurrect-strategy-vim 'session'
 set -g @resurrect-strategy-nvim 'session'
-set -g @resurrect-processes 'claude->__HOME__/bin/tmux-claude-restore ssh vim nvim htop man less tail top watch'
-set -g @resurrect-hook-post-save-all '__HOME__/bin/tmux-save-claude-sessions'
+set -g @resurrect-processes 'claude->__HOME__/bin/tmux-claude-restore copilot->__HOME__/bin/tmux-copilot-restore ssh vim nvim htop man less tail top watch'
+set -g @resurrect-hook-post-save-all '__HOME__/bin/tmux-save-claude-sessions; __HOME__/bin/tmux-save-copilot-sessions'
 
 # Continuum: auto-save every 5 min, auto-restore on tmux start
 set -g @continuum-save-interval '5'
@@ -189,9 +195,21 @@ bind-key -T copy-mode-vi MouseDragEnd1Pane send-keys -X copy-pipe-and-cancel 'xc
 
 # -- custom variables ----------------------------------------------------------
 
-# >>> host-health segment (managed) >>>
-set-option -ga status-right " #(__HOME__/bin/host-health.sh)"
-# <<< host-health segment (managed) <<<
+# >>> sysstat segment (managed) >>>
+set-option -ga status-right " #(__HOME__/bin/sysstat.sh)"
+# <<< sysstat segment (managed) <<<
+
+# >>> wt keybindings (managed) >>>
+bind w   display-popup -E -w 80% -h 60% -d "#{pane_current_path}" "__HOME__/bin/wt jump"
+bind W   command-prompt -p "wt add branch:"     "display-popup -E -d '#{pane_current_path}' '__HOME__/bin/wt add %%'"
+bind C-c command-prompt -p "wt claude branch:"  "display-popup -E -d '#{pane_current_path}' '__HOME__/bin/wt claude %%'"
+bind C-p command-prompt -p "wt copilot branch:" "display-popup -E -d '#{pane_current_path}' '__HOME__/bin/wt copilot %%'"
+# <<< wt keybindings (managed) <<<
+
+# >>> pane-logging (managed) >>>
+bind L   run-shell "__HOME__/bin/pane-log-toggle.sh"
+bind M-L run-shell "__HOME__/bin/pane-log-mode.sh"
+# <<< pane-logging (managed) <<<
 
 # /!\ do not remove the following line
 # EOF

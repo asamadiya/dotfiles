@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# Resurrect-inline restore strategy for GitHub Copilot CLI.
+# Invoked by tmux-resurrect for every pane whose saved command starts with `copilot`.
+# Cleans stale inuse locks, unsets env leaks, relaunches with YOLO flag.
+
+set -eu
+
+SAVED_CMD="${1:-copilot}"
+SESSION_STATE="$HOME/.copilot/session-state"
+
+# --- clean stale locks (>30s old) — a crashed VM leaves locks behind ---------
+if [[ -d "$SESSION_STATE" ]]; then
+  find "$SESSION_STATE" -maxdepth 2 -name 'inuse.*.lock' -mmin +0 -print0 2>/dev/null \
+    | while IFS= read -r -d '' lock; do
+      mtime=$(stat -c %Y "$lock")
+      now=$(date +%s)
+      if (( now - mtime > 30 )); then rm -f "$lock"; fi
+    done
+fi
+
+# --- strip leaking env vars --------------------------------------------------
+unset COPILOT_SESSION COPILOT_SESSION_ID COPILOT_RUNTIME COPILOT_API_KEY \
+      GH_COPILOT_TOKEN GITHUB_COPILOT_TOKEN GH_COPILOT_INTEGRATION_ID
+
+# --- ensure YOLO flag present (belt + suspenders with save-hook rewrite) ----
+CMD="$SAVED_CMD"
+[[ "$CMD" == *"--allow-all-tools"* ]] || CMD="$CMD --allow-all-tools"
+
+exec bash -c "$CMD"

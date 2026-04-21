@@ -1,0 +1,2 @@
+# Work-side git identity is local-only (real email never committed)
+git/gitconfig-work
