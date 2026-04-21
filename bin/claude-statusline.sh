@@ -11,7 +11,7 @@ DIR=$(jq -r '.workspace.current_dir // empty' <<<"$INPUT" 2>/dev/null)
 DIR=${DIR:-$(pwd)}
 DIRNAME=$(basename "$DIR")
 REMAINING=$(jq -r '.context_window.remaining_percentage // empty' <<<"$INPUT" 2>/dev/null)
-COST=$(jq -r '.estimated_cost // empty' <<<"$INPUT" 2>/dev/null)
+COST=$(jq -r '.estimated_cost // .cost.total_cost_usd // empty' <<<"$INPUT" 2>/dev/null)
 
 # Git branch + dirty glyph (fast, no fork if not in repo)
 BRANCH=""

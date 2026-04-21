@@ -88,16 +88,6 @@
     "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "80"
   },
   "hooks": {
-    "SessionStart": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"__HOME__/.claude/hooks/gsd-check-update.js\""
-          }
-        ]
-      }
-    ],
     "PreToolUse": [
       {
         "matcher": "Edit|Write",
@@ -105,16 +95,6 @@
           {
             "type": "command",
             "command": "__HOME__/bin/claude-guard-main.sh"
-          }
-        ]
-      }
-    ],
-    "PostToolUse": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"__HOME__/.claude/hooks/gsd-context-monitor.js\""
           }
         ]
       }
