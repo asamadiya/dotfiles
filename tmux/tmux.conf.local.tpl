@@ -67,7 +67,7 @@ tmux_conf_theme_window_status_current_format="#I #W#{?#{||:#{window_bell_flag},#
 
 # Status bar content
 tmux_conf_theme_status_left=" #S | #{hostname_ssh} "
-tmux_conf_theme_status_right=" #{prefix}#{mouse}#{pairing}#{synchronized} #{loadavg} , %R %d-%b | #{username}#{root}@#{hostname} "
+tmux_conf_theme_status_right=" #{prefix}#{synchronized} #(__HOME__/bin/sysstat.sh) "
 
 # 24h clock
 tmux_conf_theme_clock_colour="$tmux_conf_theme_colour_4"
@@ -195,12 +195,9 @@ bind-key -T copy-mode-vi MouseDragEnd1Pane send-keys -X copy-pipe-and-cancel 'xc
 
 # -- custom variables ----------------------------------------------------------
 
-# >>> sysstat segment (managed) >>>
-set-option -ga status-right " #(__HOME__/bin/sysstat.sh)"
-# <<< sysstat segment (managed) <<<
-
 # >>> wt keybindings (managed) >>>
-bind w   display-popup -E -w 80% -h 60% -d "#{pane_current_path}" "__HOME__/bin/wt jump"
+bind w   choose-tree -Zw
+bind C-w display-popup -E -w 80% -h 60% -d "#{pane_current_path}" "__HOME__/bin/wt jump"
 bind W   command-prompt -p "wt add branch:"     "display-popup -E -d '#{pane_current_path}' '__HOME__/bin/wt add %%'"
 bind C-c command-prompt -p "wt claude branch:"  "display-popup -E -d '#{pane_current_path}' '__HOME__/bin/wt claude %%'"
 bind C-p command-prompt -p "wt copilot branch:" "display-popup -E -d '#{pane_current_path}' '__HOME__/bin/wt copilot %%'"

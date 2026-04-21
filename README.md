@@ -170,7 +170,7 @@ See `CHANGELOG.md` for 20 documented issues with root causes and fixes. Common o
 
 | Key | Action |
 |---|---|
-| `prefix+w` | fzf over worktrees, jump in tmux |
+| `prefix+C-w` | fzf over worktrees, jump in tmux |
 | `prefix+W` | prompt for branch → `wt add` |
 | `prefix+C-c` | prompt for branch → `wt claude` (YOLO) |
 | `prefix+C-p` | prompt for branch → `wt copilot` (YOLO) |

@@ -51,7 +51,7 @@ units, and the state-snapshot timer.
 
 | Key | Action |
 |---|---|
-| `prefix+w` | Fuzzy-jump to any existing worktree under `~/lin_code/wt/` |
+| `prefix+C-w` | Fuzzy-jump to any existing worktree under `~/lin_code/wt/` |
 | `prefix+W` | Prompt for branch, create new worktree + tmux window |
 | `prefix+C-c` | Prompt for branch, create worktree + launch Claude Code (YOLO) |
 | `prefix+C-p` | Prompt for branch, create worktree + launch Copilot CLI (YOLO) |
@@ -86,7 +86,7 @@ drag-border-to-resize, wheel-to-scrollback, drag-to-select-and-copy
 2. `prefix+C-c`, branch `feature-one` → tmux window `<repo>/feature-one` with Claude YOLO.
 3. `prefix+C-c`, branch `feature-two` → another window with Claude YOLO.
 4. `prefix+C-p`, branch `feature-three` → Copilot YOLO window.
-5. Switch windows with `prefix+<N>` or `prefix+w` (fzf).
+5. Switch windows with `prefix+<N>` or `prefix+C-w` (fzf).
 6. Each worktree is at `~/lin_code/wt/<repo>/feature-N/`. Isolated.
 
 ### End a session
