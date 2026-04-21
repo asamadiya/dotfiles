@@ -42,7 +42,7 @@ dotfiles/
 │   └── lint-shell.sh                # shellcheck wrapper over bin/ + tests/
 ├── claude/
 │   ├── settings.json       # Permissions, hooks, plugins, env vars
-│   ├── keybindings.json    # Ctrl+G (git), Ctrl+K (GPU)
+│   ├── keybindings.json    # Claude Code keybindings (empty scaffold)
 │   ├── CLAUDE.md           # Global instructions (symlinked to ~/CLAUDE.md)
 │   ├── rules/persona.md    # Power-user persona rules
 │   └── agents/             # Custom + GSD agents (15 agents)
@@ -96,8 +96,6 @@ Claude Code sessions are restored to their exact conversation via session ID map
 
 | Keybinding | Action |
 |---|---|
-| `Ctrl+G` | Git status + diff |
-| `Ctrl+K` | GPU utilization |
 | `Shift+Tab` | Cycle permission modes |
 | `Esc Esc` | Rewind to checkpoint |
 
