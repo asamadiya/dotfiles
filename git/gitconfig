@@ -60,6 +60,11 @@
     sglog = log --graph --decorate --pretty=oneline --abbrev-commit
     glog = log --graph --decorate --pretty=oneline --abbrev-commit --all --date=local
     ls = ls-files
+    sl = !git-branchless smartlog
+    move = !git-branchless move
+    undo = !git-branchless undo
+    hide = !git-branchless hide
+    unhide = !git-branchless unhide
 
 [filter "lfs"]
     required = true
