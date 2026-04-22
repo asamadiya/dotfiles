@@ -101,9 +101,9 @@ bin/install-user-bins.sh <name>    # install a single tool
 - Shells / editors: zsh · nvim
 
 **Version policy:** pins in the `TOOLS` table are concrete semvers — bump
-quarterly via `git diff`. Several tools have `--version` output that doesn't
-match the fetcher's semver regex; they re-install on every run — harmless
-(eza, gh-dash, sd, git-branchless, spr).
+quarterly via `git diff`. Idempotency is tracked via a sentinel file per tool
+under `~/.local/state/install-user-bins/<tool>.version`, so repeated runs
+are cheap (no `--version` parsing, no re-fetches).
 
 ### Known platform quirks on ld5
 
@@ -258,12 +258,6 @@ export CARAPACE_HIDDEN=kubectl,helm
 
 Aliases apply only to interactive shells; pipes get real `ls`. To force raw
 `ls` interactively use `\ls` or `command ls`.
-
-### `install-user-bins.sh` re-installs some tools on every run
-
-Expected for tools whose `--version` output doesn't include a `digit.digit(.digit)?`
-pattern: `eza`, `gh-dash`, `sd`, `git-branchless`, `spr`. Cosmetic; the
-install step is idempotent (same binary fetched + installed).
 
 ## Rollback
 

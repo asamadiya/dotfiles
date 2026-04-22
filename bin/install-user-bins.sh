@@ -14,7 +14,8 @@ set -euo pipefail
 
 BINDIR="${BINDIR:-$HOME/.local/bin}"
 TMPDIR="${TMPDIR:-/tmp}"
-mkdir -p "$BINDIR"
+STATE_DIR="${STATE_DIR:-$HOME/.local/state/install-user-bins}"
+mkdir -p "$BINDIR" "$STATE_DIR"
 
 FORCE=0
 SINGLE=""
@@ -45,12 +46,20 @@ install_tool() {
   local name="$1" version="$2" repo="$3" asset_tmpl="$4" bin_in_archive="$5"
   local tag_tmpl="${6:-{V\}}"
 
+  # Idempotency via sentinel file: after each successful install, we write
+  # the version string to $STATE_DIR/<name>.version. Parsing `<tool> --version`
+  # is fragile (format drift, missing semver, non-standard prefixes) so we
+  # trust the sentinel as the source of truth. Fallback: if the binary exists
+  # but the sentinel does not (e.g. first run on a host that had the tool
+  # installed by an older version of this script), re-install once so the
+  # sentinel gets written.
+  local sentinel="$STATE_DIR/$name.version"
   local installed_version=""
-  if [[ -x "$BINDIR/$name" ]]; then
-    installed_version=$("$BINDIR/$name" --version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1 || true)
+  if [[ -f "$sentinel" ]]; then
+    installed_version=$(head -1 "$sentinel" 2>/dev/null || true)
   fi
 
-  if (( ! FORCE )) && [[ "$installed_version" == "$version" ]]; then
+  if (( ! FORCE )) && [[ -x "$BINDIR/$name" ]] && [[ "$installed_version" == "$version" ]]; then
     log "$name $version (already installed)"
     return 0
   fi
@@ -91,6 +100,7 @@ install_tool() {
   fi
 
   install -m755 "$src" "$BINDIR/$name"
+  printf '%s\n' "$version" > "$sentinel"
   log "$name $version installed to $BINDIR/$name"
 }
 
@@ -163,9 +173,13 @@ register yq               4.53.2   mikefarah/yq               'yq_linux_amd64'  
 # --- special-case installers -------------------------------------------------
 
 install_zsh() {
+  # zsh-bin does not carry a script-side version pin — we just re-use whatever
+  # the installer places. Use a synthetic "installed" marker in the sentinel so
+  # repeated runs skip cleanly regardless of `zsh --version` drift.
   local target="$BINDIR/zsh"
-  if (( ! FORCE )) && [[ -x "$target" ]]; then
-    log "zsh $("$target" --version | awk '{print $2}') (already installed)"
+  local sentinel="$STATE_DIR/zsh.version"
+  if (( ! FORCE )) && [[ -x "$target" ]] && [[ -f "$sentinel" ]]; then
+    log "zsh $(head -1 "$sentinel") (already installed)"
     return 0
   fi
   log "installing zsh via romkatv/zsh-bin"
@@ -175,6 +189,9 @@ install_zsh() {
     warn "zsh-bin installer failed"
     return 1
   fi
+  local zsh_version
+  zsh_version=$("$target" --version 2>/dev/null | awk '{print $2}' || true)
+  printf '%s\n' "${zsh_version:-zsh-bin}" > "$sentinel"
   "$target" --version
 }
 
@@ -183,12 +200,14 @@ install_nvim() {
   # v0.12.1 runs on glibc 2.38 (verified).
   local version="0.12.1"
   local target="$BINDIR/nvim"
-  if (( ! FORCE )) && [[ -x "$target" ]]; then
-    local current; current=$("$target" --version | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || true)
-    if [[ "$current" == "$version" ]]; then
-      log "nvim $version (already installed)"
-      return 0
-    fi
+  local sentinel="$STATE_DIR/nvim.version"
+  local installed_version=""
+  if [[ -f "$sentinel" ]]; then
+    installed_version=$(head -1 "$sentinel" 2>/dev/null || true)
+  fi
+  if (( ! FORCE )) && [[ -x "$target" ]] && [[ "$installed_version" == "$version" ]]; then
+    log "nvim $version (already installed)"
+    return 0
   fi
   log "installing nvim $version AppImage"
   local url="https://github.com/neovim/neovim/releases/download/v${version}/nvim-linux-x86_64.appimage"
@@ -210,6 +229,7 @@ install_nvim() {
     cp -a "$tmp/squashfs-root/." "$payload/"
     ln -sfn "$payload/usr/bin/nvim" "$target"
   fi
+  printf '%s\n' "$version" > "$sentinel"
   "$target" --version | head -1
 }
 
