@@ -187,6 +187,18 @@ Auto-adds binaries to Git LFS by extension. Aborts loudly on secret regex (`ghp_
 
 For the full design rationale see `docs/superpowers/specs/2026-04-19-observability-design.md`. For daily workflows see `docs/guides/2026-04-19-observability-user-guide.md`.
 
+## Quickstart (start here if you'''re new)
+
+**→ [`docs/guides/QUICKSTART.md`](docs/guides/QUICKSTART.md)** — a 30-minute
+hands-on tour of the whole stack (zsh, modern CLI, lazygit, worktrees + AI
+agents, observability, neovim), with a "try this" command in every section.
+Written for someone comfortable with vim + tmux but new to everything else
+power-tui added.
+
+For phase-specific reference see the two deep-dive guides:
+[observability](docs/guides/2026-04-19-observability-user-guide.md) and
+[productivity](docs/guides/2026-04-21-productivity-user-guide.md).
+
 ## Productivity (power-productivity phase)
 
 ### Shell
