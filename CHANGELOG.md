@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-04-22 — Pixi (branch: add-pixi)
+
+Add `pixi` 0.67.1 to `bin/install-user-bins.sh` for polyglot project envs
+(conda-forge + lockfile, multi-platform reproducible). Pulled in ahead of the
+polyglot-env spec cycle per user direction. musl variant (`pixi-x86_64-unknown-linux-musl.tar.gz`)
+to avoid host glibc 2.38 mismatches. Docs updated: productivity user guide
+gets a new "Pixi" section; QUICKSTART gains a one-liner under CLI tools
+and §10 now notes the remaining polyglot-env spec work; `env.txt` regenerated.
+
 ## 2026-04-21 — Productivity phase (branch: power-productivity)
 
 Second phase of the power-tui overhaul — shell + CLI + neovim. Per

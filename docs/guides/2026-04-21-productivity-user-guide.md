@@ -97,6 +97,7 @@ bin/install-user-bins.sh <name>    # install a single tool
 - Core CLI replacements: bat · eza · fd · rg · delta · difft · sd · jq
 - Git tooling: lazygit · gh-dash · git-absorb · git-branchless · git-who · spr · onefetch · scc
 - System: btop · hyperfine · tldr · just · watchexec · asciinema · vhs · yazi · dust · duf · procs
+- Project envs: pixi
 - Bridges: gh · yq
 - Shells / editors: zsh · nvim
 
@@ -166,6 +167,61 @@ The bundled tree-sitter CLI requires glibc 2.39; ld5 is 2.38. Parser builds
 fail on first `:TSUpdate`. LazyVim falls back to **prebuilt parsers** fetched
 over the network on first interactive open. If you hit missing-parser errors
 after first open, run `lv +TSUpdateSync +qa!` once more — LazyVim will retry.
+
+## Pixi (polyglot project env manager)
+
+`pixi` is a conda-forge-based project manager from prefix-dev. It manages
+Python, Rust, C/C++, Node, etc. per-project via `pixi.toml` + `pixi.lock`,
+giving you reproducible multi-platform environments without system package
+installs or per-language version managers.
+
+### When to reach for it
+
+- **ML / data / multi-language projects** where you want conda-forge's curated
+  binaries (numpy, pytorch, ffmpeg, CUDA toolkits) *and* a real lockfile
+  pinned across Linux/macOS/Windows.
+- **Mixed-language repos** (Python + Rust, Python + C extensions) where you'd
+  otherwise juggle `uv` + `cargo` + `nix`/`apt`.
+- **Sharing an environment with teammates** on different OSes and getting
+  byte-identical resolves.
+
+### Alternatives we've considered
+
+Productivity spec §11 deferred polyglot-env to a later cycle. The space:
+
+| Tool | Scope | Why pixi wins here |
+|---|---|---|
+| `mise` (formerly rtx) | Polyglot *runtime versions* (like asdf) | Doesn't manage libraries; no conda-forge; no lockfile across hosts |
+| `uv` | Python-only, extremely fast | Great for pure-Python; falls over on C/CUDA/native binaries that conda-forge ships |
+| `conda` / `mamba` | Same ecosystem, older UX | No first-class lockfile; solver is slower; no per-project by default |
+| `poetry` | Python + PyPI | Python-only; no conda-forge; no C toolchain story |
+
+Pixi wins when you want **conda-forge + lockfile + Rust-fast solver +
+multi-platform** in one tool.
+
+### Quick-start
+
+```bash
+cd ~/projects/my-ml-thing
+pixi init                          # creates pixi.toml + pixi.lock
+pixi add python numpy pandas       # from conda-forge
+pixi add --pypi httpx              # from PyPI
+pixi run python -c 'import numpy'  # one-shot run inside the env
+pixi shell                          # drop into the env (like conda activate)
+pixi update                         # bump lockfile
+pixi task add build 'python -m build'
+pixi run build
+```
+
+The lockfile (`pixi.lock`) commits alongside `pixi.toml`; teammates get
+identical resolves across Linux/macOS/Windows via `pixi install`.
+
+### Why we pulled it in ahead of the polyglot-env spec
+
+Short answer: needed it for a ML/data workflow and the tool is self-contained
+(one binary, no daemons, no PATH hijacking). Landed early per user direction;
+the full polyglot-env spec (covering mise / uv coexistence, direnv hook
+integration, LSP-per-project conventions) remains a later cycle.
 
 ## Atuin cloud sync
 

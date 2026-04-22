@@ -170,6 +170,11 @@ register procs            0.14.11  dalance/procs              'procs-{V}-x86_64-
 register gh               2.90.0   cli/cli                    'gh_{v}_linux_amd64.tar.gz'                                   'gh_{v}_linux_amd64/bin/gh'
 register yq               4.53.2   mikefarah/yq               'yq_linux_amd64'                                              '-'
 
+# Polyglot project env manager — resolved 2026-04-19.
+# Pulled in ahead of the polyglot-env spec cycle (productivity §11 had deferred this).
+# musl variant avoids host glibc 2.38 mismatches; tarball unpacks to a single `pixi` binary.
+register pixi             0.67.1   prefix-dev/pixi            'pixi-x86_64-unknown-linux-musl.tar.gz'                       'pixi'
+
 # --- special-case installers -------------------------------------------------
 
 install_zsh() {

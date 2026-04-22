@@ -154,6 +154,7 @@ Not aliased (type these explicitly — it's the habit that matters):
 | `fd <pat>` | Sane `find`. `fd '\.py$'` finds all Python files. |
 | `bat <file>` | Same as `cat` alias but with a pager. Good for long files. |
 | `sd 'foo' 'bar' file.txt` | Modern `sed` for simple substitution. |
+| `pixi init` / `pixi add <pkg>` / `pixi run <task>` | Polyglot project env (conda-forge + lockfile). See productivity guide. |
 
 **Try this:** `rg 'session-end' ~/my_stuff/dotfiles` — gitignore-aware grep
 across the repo in milliseconds.
@@ -497,6 +498,9 @@ Edit the pins in `bin/install-user-bins.sh` — resolve each via
 - **NVIDIA driver + CUDA** — unlocks the GPU segment in the tmux status, plus `nvitop` / `gpustat` / `py-spy --native` for ML workflows.
 - **Mac-side dotfiles** — Brewfile, Ghostty/WezTerm, SSH ControlMaster, Maccy clipboard history, shared starship config. Its own spec + plan cycle.
 - **Agentic-loop tools** — `aider`, `simonw/llm`, `ollama`. Another spec cycle.
+- **Polyglot-env spec** (remaining). `pixi` landed early (see productivity
+  guide) but the full cycle — mise / uv coexistence, direnv hook integration,
+  LSP-per-project conventions — is still its own spec.
 
 All of those are their own spec→plan→implementation cycles — you decide when
 to tackle each one.
