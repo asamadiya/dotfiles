@@ -17,6 +17,7 @@ declare -A FILES=(
     ["$HOME/.claude/keybindings.json"]="$DOTFILES/claude/keybindings.json"
     ["$HOME/.claude/rules/persona.md"]="$DOTFILES/claude/rules/persona.md"
     ["$HOME/.claude/rules/no-claude-attribution.md"]="$DOTFILES/claude/rules/no-claude-attribution.md"
+    ["$HOME/.claude/hooks/block-ai-attribution.sh"]="$DOTFILES/claude/hooks/block-ai-attribution.sh"
     ["$HOME/CLAUDE.md"]="$DOTFILES/claude/CLAUDE.md"
     ["$HOME/.inputrc"]="$DOTFILES/shell/inputrc"
     ["$HOME/.vimrc"]="$DOTFILES/vim/vimrc"

@@ -123,6 +123,7 @@ generate "$DOTFILES/claude/settings.json.tpl" "$HOME/.claude/settings.json"
 link "$DOTFILES/claude/keybindings.json" "$HOME/.claude/keybindings.json"
 link "$DOTFILES/claude/rules/persona.md" "$HOME/.claude/rules/persona.md"
 link "$DOTFILES/claude/rules/no-claude-attribution.md" "$HOME/.claude/rules/no-claude-attribution.md"
+link "$DOTFILES/claude/hooks/block-ai-attribution.sh" "$HOME/.claude/hooks/block-ai-attribution.sh"
 link "$DOTFILES/claude/CLAUDE.md"        "$HOME/CLAUDE.md"
 for agent in "$DOTFILES/claude/agents/"*.md; do
     [ -f "$agent" ] && link "$agent" "$HOME/.claude/agents/$(basename "$agent")"

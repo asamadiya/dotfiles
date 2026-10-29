@@ -102,6 +102,15 @@
             "command": "__HOME__/bin/claude-guard-main.sh"
           }
         ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "__HOME__/.claude/hooks/block-ai-attribution.sh"
+          }
+        ]
       }
     ],
     "Notification": [
