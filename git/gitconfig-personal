@@ -5,3 +5,12 @@
 
 [commit]
     gpgsign = false
+
+# Personal GitHub account lives in a separate gh config; the global helper uses the work account.
+[credential "https://github.com"]
+    helper =
+    helper = !GH_CONFIG_DIR=$HOME/.config/gh-other gh auth git-credential
+
+[credential "https://gist.github.com"]
+    helper =
+    helper = !GH_CONFIG_DIR=$HOME/.config/gh-other gh auth git-credential
