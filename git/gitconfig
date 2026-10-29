@@ -1,7 +1,3 @@
-[user]
-    name = asamadiya
-    email = asamadiya@users.noreply.github.com
-
 [core]
     pager = delta
     editor = vim
@@ -74,14 +70,17 @@
 
 [credential "https://github.com"]
     helper =
-    helper = !/usr/bin/gh auth git-credential
+    helper = !gh auth git-credential
 
 [credential "https://gist.github.com"]
     helper =
-    helper = !/usr/bin/gh auth git-credential
+    helper = !gh auth git-credential
+
+# No [user] here: this file is ~/.gitconfig, so anything git config --global writes lands in a public repo.
+# Default identity comes from the untracked ~/.gitconfig-work (see gitconfig-work.example); hosts without
+# it have no default and git refuses to commit outside ~/my_stuff. Personal repos override it below.
+[include]
+    path = ~/.gitconfig-work
 
 [includeIf "gitdir:~/my_stuff/"]
     path = ~/.gitconfig-personal
-
-[includeIf "gitdir:~/lin_code/"]
-    path = ~/.gitconfig-work

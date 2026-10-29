@@ -59,7 +59,7 @@ echo "=== Git ==="
 link "$DOTFILES/git/gitconfig"          "$HOME/.gitconfig"
 link "$DOTFILES/git/gitconfig-personal" "$HOME/.gitconfig-personal"
 if [ ! -f "$HOME/.gitconfig-work" ]; then
-  echo "Note: copy $DOTFILES/git/gitconfig-work.example to ~/.gitconfig-work and fill in your work email."
+  echo "Note: copy $DOTFILES/git/gitconfig-work.example to ~/.gitconfig-work and fill in your work email (default identity outside ~/my_stuff)."
 fi
 
 echo "=== Oh My Tmux ==="
