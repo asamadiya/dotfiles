@@ -9,10 +9,11 @@
 #   - Auto-adds binary files to Git LFS by extension (no `git lfs install` required).
 #   - Aborts with a loud log if staged cleartext matches a known-secret regex.
 #   - Exits 0 silently when: not in a repo / nothing to commit.
+#   - Never touches work repos under ~/lin_code: no snapshot commits on PR branches, no skipped pre-commit.
 
 set -eu
 
-AGENT="${1:-unknown}"
+# $1 (agent) is accepted for caller compatibility and kept out of the commit message.
 SID="${2:-unknown}"
 SHORT="${SID:0:8}"
 
@@ -20,6 +21,10 @@ SHORT="${SID:0:8}"
 if ! REPO=$(git rev-parse --show-toplevel 2>/dev/null); then
   exit 0  # not in a repo
 fi
+
+case "$REPO/" in
+  "$HOME"/lin_code/*) exit 0 ;;  # work repo
+esac
 
 cd "$REPO"
 
@@ -70,6 +75,6 @@ done
 
 # --- commit ------------------------------------------------------------------
 SUMMARY=$(git diff --cached --shortstat | sed 's/^ //')
-MSG="session $AGENT $SHORT: ${SUMMARY:-working state snapshot}"
+MSG="session $SHORT: ${SUMMARY:-working state snapshot}"
 git commit -m "$MSG" --no-verify >/dev/null  # --no-verify only for THIS hook; manual commits still run pre-commit
 exit 0
