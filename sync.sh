@@ -16,6 +16,7 @@ declare -A FILES=(
     ["$HOME/.gitconfig"]="$DOTFILES/git/gitconfig"
     ["$HOME/.claude/keybindings.json"]="$DOTFILES/claude/keybindings.json"
     ["$HOME/.claude/rules/persona.md"]="$DOTFILES/claude/rules/persona.md"
+    ["$HOME/.claude/rules/no-claude-attribution.md"]="$DOTFILES/claude/rules/no-claude-attribution.md"
     ["$HOME/CLAUDE.md"]="$DOTFILES/claude/CLAUDE.md"
     ["$HOME/.inputrc"]="$DOTFILES/shell/inputrc"
     ["$HOME/.vimrc"]="$DOTFILES/vim/vimrc"

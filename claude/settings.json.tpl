@@ -78,6 +78,11 @@
     ]
   },
   "cleanupPeriodDays": 30,
+  "attribution": {
+    "commit": "",
+    "pr": "",
+    "sessionUrl": false
+  },
   "spinnerTipsEnabled": false,
   "alwaysThinkingEnabled": true,
   "showThinkingSummaries": true,
