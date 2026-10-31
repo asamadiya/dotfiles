@@ -1,0 +1,157 @@
+#!/usr/bin/env python3
+"""Record which side ends each mosh session, using pidfds (no ptrace needed).
+
+Measured with a 38 ms RTT relay (Mac -> VM RTT is ~38 ms):
+
+    gap < 20 ms:  mosh-server started the teardown, so its shell died ~2 ms
+                  later. The Mac client sent a quit (tab closed, terminal
+                  quit or crashed, Ctrl-^ .), or mosh-server itself got
+                  SIGTERM/SIGINT on this VM.
+    gap >= RTT:   the shell died first (killed or exited on this VM).
+                  mosh-server then waits one round trip for the Mac to ack
+                  the shutdown before it exits.
+
+Each exit line also records whether the client was heard from in the last 30s
+("via mosh" in utmp), so a death during a network blackout is visible.
+Client live/silent transitions are logged too.
+
+mosh-server never exits on its own when its client vanishes (Mac rebooted,
+terminal crashed, new `mosh` instead of resuming). Those orphans pile up in
+utmp and show up as "detached Mosh sessions" at every login. Servers whose
+client has been silent for REAP_AFTER_S are sent SIGTERM; the tmux sessions
+they were attached to are unaffected.
+"""
+import os
+import select
+import signal
+import subprocess
+import sys
+import time
+from dataclasses import dataclass, field
+
+LOG = sys.argv[1] if len(sys.argv) > 1 else os.path.expanduser("~/mosh-watch.log")
+UID = os.getuid()
+RESCAN_S = 2.0
+SHELL_FIRST_MS = 20.0
+REAP_AFTER_S = 7 * 86400
+
+
+@dataclass
+class Session:
+    server: int
+    shell: int
+    tty: str
+    fg: str
+    started: str
+    client: str = "?"
+    silent_since: float | None = None
+    exits: dict[str, float] = field(default_factory=dict)
+
+
+def log(msg: str) -> None:
+    now = time.time()
+    stamp = time.strftime("%FT%T", time.gmtime(now)) + f".{int(now * 1000) % 1000:03d}Z"
+    with open(LOG, "a") as f:
+        f.write(f"{stamp} {msg}\n")
+
+
+def read(path: str) -> str:
+    try:
+        with open(path) as f:
+            return f.read().strip()
+    except OSError:
+        return ""
+
+
+def mosh_servers() -> list[int]:
+    out = []
+    for name in os.listdir("/proc"):
+        if not name.isdigit():
+            continue
+        try:
+            if os.stat(f"/proc/{name}").st_uid == UID and read(f"/proc/{name}/comm") == "mosh-server":
+                out.append(int(name))
+        except OSError:
+            pass
+    return out
+
+
+def utmp_state() -> dict[int, str]:
+    """mosh-server pid -> 'live' (client heard < 30s ago) or 'silent'."""
+    state = {}
+    for line in subprocess.run(["who"], capture_output=True, text=True).stdout.splitlines():
+        if "mosh [" in line:
+            pid = int(line.rsplit("[", 1)[1].rstrip("])"))
+            state[pid] = "live" if "via mosh" in line else "silent"
+    return state
+
+
+def describe(shell: int) -> tuple[str, str]:
+    tty = os.path.basename(os.readlink(f"/proc/{shell}/fd/0")) if os.path.exists(f"/proc/{shell}/fd/0") else "?"
+    kids = read(f"/proc/{shell}/task/{shell}/children").split()
+    fg = read(f"/proc/{kids[-1]}/cmdline").replace("\0", " ").strip() if kids else read(f"/proc/{shell}/cmdline").replace("\0", " ")
+    return tty, fg[:60]
+
+
+def main() -> None:
+    sessions: dict[int, Session] = {}
+    fds: dict[int, tuple[Session, str]] = {}
+    poller = select.poll()
+    state: dict[int, str] = {}
+    next_scan = 0.0
+    log(f"watcher start pid={os.getpid()}")
+
+    while True:
+        if time.monotonic() >= next_scan:
+            state = utmp_state()
+            for srv in mosh_servers():
+                if srv in sessions:
+                    continue
+                kids = read(f"/proc/{srv}/task/{srv}/children").split()
+                if not kids:
+                    continue
+                shell = int(kids[0])
+                try:
+                    sfd, hfd = os.pidfd_open(srv), os.pidfd_open(shell)
+                except ProcessLookupError:
+                    continue
+                tty, fg = describe(shell)
+                s = Session(srv, shell, tty, fg, read(f"/proc/{srv}/stat").split()[21])
+                sessions[srv] = s
+                for fd, role in ((sfd, "server"), (hfd, "shell")):
+                    fds[fd] = (s, role)
+                    poller.register(fd, select.POLLIN)
+                s.client = state.get(srv, "?")
+                log(f"track server={srv} shell={shell} tty={tty} client={s.client} fg=[{fg}]")
+            now = time.time()
+            for s in sessions.values():
+                client = state.get(s.server, s.client)
+                if client != s.client:
+                    log(f"client {client} server={s.server} tty={s.tty} fg=[{s.fg}]")
+                    s.client = client
+                if client != "silent":
+                    s.silent_since = None
+                    continue
+                s.silent_since = s.silent_since or now
+                if now - s.silent_since >= REAP_AFTER_S:
+                    log(f"reap server={s.server} tty={s.tty} silent_h={(now - s.silent_since) / 3600:.0f} fg=[{s.fg}]")
+                    os.kill(s.server, signal.SIGTERM)
+                    s.silent_since = None
+            next_scan = time.monotonic() + RESCAN_S
+
+        for fd, _ in poller.poll(int(RESCAN_S * 1000)):
+            s, role = fds.pop(fd)
+            poller.unregister(fd)
+            os.close(fd)
+            s.exits[role] = time.time()
+            log(f"exit {role} server={s.server} shell={s.shell} tty={s.tty} client_last={state.get(s.server, '?')} fg=[{s.fg}]")
+            if len(s.exits) == 2:
+                gap = (s.exits["server"] - s.exits["shell"]) * 1000
+                verdict = ("shell died first: ended on THIS VM" if gap >= SHELL_FIRST_MS
+                           else "mosh-server quit first: Mac client sent quit (or mosh-server signalled)")
+                log(f"VERDICT server={s.server} tty={s.tty} server_minus_shell_ms={gap:+.1f} -> {verdict}")
+                del sessions[s.server]
+
+
+if __name__ == "__main__":
+    main()
