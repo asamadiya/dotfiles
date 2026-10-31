@@ -1,0 +1,6 @@
+{
+  "services": [
+    {"name": "copilot-cc", "match": "copilot_connector\\.py serve", "env": ["GH_CONFIG_DIR", "COPILOT_HOME", "COPILOT_GITHUB_TOKEN"]}
+  ],
+  "units": ["agentctl-tick.timer", "agentctl-backup.timer", "mosh-watch.service", "dbus-reaper.service"]
+}

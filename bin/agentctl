@@ -1,0 +1,1377 @@
+#!/usr/bin/env python3
+"""agentctl -- keep tmux sessions and their Claude/Copilot agents restorable.
+
+    agentctl snapshot [--quiet]      record every tmux pane and the exact agent session in it
+    agentctl restore [-n] [--at REF] [-s SESSION]... [--into-running]
+    agentctl tick                    systemd entry: restore after server loss or reboot, else snapshot
+    agentctl status                  saved vs live, duplicate sessions, services
+    agentctl lost                    agent sessions that are no longer running, with resume commands
+    agentctl history                 saved manifests (one per change)
+    agentctl pause | unpause         stop/allow automatic restore
+    agentctl doctor                  health checks
+    agentctl backup [--prune]        incremental transcript backup (append-only shards, zstd)
+    agentctl recover SESSION_ID      restore one session's files from backup
+
+Session ids are exact: Claude writes ~/.claude/sessions/<pid>.json (checked against
+the process start time so a reused pid cannot match); Copilot logs
+"Registering foreground session: <id>" in ~/.copilot/logs/process-<ms>-<pid>.log.
+
+Restore only creates what is missing. It never kills or respawns a pane that is
+running something, never starts a session that is already running elsewhere,
+and never starts the same session in two panes.
+"""
+from __future__ import annotations
+
+import argparse
+import contextlib
+import dataclasses
+import datetime as dt
+import fcntl
+import json
+import os
+import re
+import shlex
+import shutil
+import signal
+import socket
+import subprocess
+import sys
+import time
+from pathlib import Path
+from typing import Iterator
+
+HOME = Path.home()
+STATE = Path(os.environ.get("AGENTCTL_STATE", HOME / ".local/state/agentctl"))
+CONFIG = Path(os.environ.get("AGENTCTL_CONFIG", HOME / ".config/agentctl/config.json"))
+TMUX = shutil.which("tmux") or "/usr/bin/tmux"
+TMUX_SOCKET = os.environ.get("AGENTCTL_TMUX_SOCKET")
+TMUX_CONF = os.environ.get("AGENTCTL_TMUX_CONF")
+CLAUDE_HOME = Path(os.environ.get("CLAUDE_CONFIG_DIR", HOME / ".claude"))
+COPILOT_HOME = Path(os.environ.get("COPILOT_HOME", HOME / ".copilot"))
+SCHEMA = 1
+SEP = "␟"  # tmux escapes control characters (incl. tab) in -F output; this one passes through
+KEEP_HISTORY = 400
+SEEN_DAYS = 45
+UUID = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+CLK_TCK = os.sysconf("SC_CLK_TCK")
+SHELLS = {"bash", "zsh", "sh", "dash", "ksh", "fish"}
+
+# Environment a launcher sets for the agent that the pane shell does not have
+# (e.g. claude-copilot's ANTHROPIC_BASE_URL). Values are restored; secrets never are.
+ENV_KEEP = ("ANTHROPIC_", "CLAUDE_CODE_", "CLAUDE_AUTOCOMPACT", "MAX_THINKING_TOKENS", "MCP_TIMEOUT",
+            "DISABLE_", "NO_PROXY", "COPILOT_", "GH_CONFIG_DIR", "GH_HOST")
+ENV_SECRET = re.compile(r"TOKEN|SECRET|PASSWORD|API_KEY|COOKIE|CREDENTIAL")
+ENV_RUNTIME = re.compile(r"^COPILOT_(CLI_|LOADER_PID|EXTENSION_|SDK_|RUNTIME)")
+PROXY_VARS = {"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"}
+
+# Option arity for rewriting a saved argv into a resume command (from `--help` of
+# claude 2.1.312 / copilot 1.0.103). 0 = flag, 1 = one value, "?" = optional value,
+# "+" = one or more values, "*" = zero or more values, up to the next option.
+CLAUDE_ARITY = {
+    "--add-dir": "+", "--agent": 1, "--agents": 1, "--allowedTools": "+", "--allowed-tools": "+",
+    "--append-system-prompt": 1, "--autocompact": 1, "--betas": "+", "--debug-file": 1,
+    "--disallowedTools": "+", "--disallowed-tools": "+", "--effort": 1, "--environment": 1,
+    "--fallback-model": 1, "--file": "+", "--input-format": 1, "--json-schema": 1, "--max-budget-usd": 1,
+    "--mcp-config": "+", "--model": 1, "-n": 1, "--name": 1, "--output-format": 1, "--permission-mode": 1,
+    "--permission-prompts": 1, "--permission-prompt-tool": 1, "--plugin-dir": 1, "--plugin-url": 1,
+    "--remote-control-session-name-prefix": 1, "--session-id": 1, "--setting-sources": 1, "--settings": 1,
+    "--system-prompt": 1, "--system-prompt-snapshot": 1, "--tools": "+", "-r": "?", "--resume": "?",
+    "--from-pr": "?", "--teleport": "?", "-w": "?", "--worktree": "?", "-d": "?", "--debug": "?",
+    "--cloud": "?", "--remote-control": "?", "--prompt-suggestions": "?",
+}
+COPILOT_ARITY = {
+    "-C": 1, "-i": 1, "--interactive": 1, "-p": 1, "--prompt": 1, "--model": 1, "--reasoning-effort": 1,
+    "--context": 1, "--auto-tier": 1, "--agent": 1, "-n": 1, "--name": 1, "--session-id": 1,
+    "--log-dir": 1, "--extension-sdk-path": 1, "--log-level": 1, "--stream": 1, "--output-format": 1,
+    "--add-dir": 1, "--attachment": 1, "--disable-mcp-server": 1, "--add-github-mcp-toolset": 1,
+    "--add-github-mcp-tool": 1, "--plugin-dir": 1, "--additional-mcp-config": 1, "--mcp-github-auth": 1,
+    "--max-autopilot-continues": 1, "--mode": 1, "--host-environment": 1, "--host-compute-id": 1,
+    "--dynamic-retrieval": 1, "--enable-mcp-server": 1, "--max-ai-credits": 1, "--usage-output-file": 1,
+    "-r": "?", "--resume": "?", "--connect": "?", "--share": "?", "--allow-tool": "*", "--deny-tool": "*",
+    "--available-tools": "*", "--excluded-tools": "*", "--secret-env-vars": "*", "--allow-url": "*",
+    "--deny-url": "*", "--bash-env": "?", "--mouse": "?",
+}
+# Options that pick or create a session, or start a one-shot run; replaced by --resume <id>.
+CLAUDE_STRIP = {"-r", "--resume", "-c", "--continue", "--session-id", "--fork-session", "--from-pr",
+                "--teleport", "--cloud", "-n", "--name", "-w", "--worktree", "--tmux", "-p", "--print"}
+COPILOT_STRIP = {"-r", "--resume", "--continue", "--session-id", "-n", "--name", "--connect",
+                 "-i", "--interactive", "-p", "--prompt"}
+
+
+# --------------------------------------------------------------------------- utils
+
+def log(msg: str) -> None:
+    STATE.mkdir(parents=True, exist_ok=True)
+    path = STATE / "agentctl.log"
+    with contextlib.suppress(FileNotFoundError):
+        if path.stat().st_size > 2 << 20:
+            path.replace(path.with_suffix(".log.1"))
+    stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    with open(path, "a") as f:
+        f.write(f"{stamp} [{os.getpid()}] {msg}\n")
+
+
+def say(msg: str) -> None:
+    print(msg, flush=True)
+
+
+def config() -> dict:
+    try:
+        return json.loads(CONFIG.read_text())
+    except FileNotFoundError:
+        return {}
+
+
+def tmux_argv(*args: str, conf: bool = False) -> list[str]:
+    out = [TMUX]
+    if TMUX_SOCKET:
+        out += ["-L", TMUX_SOCKET]
+    if conf and TMUX_CONF:
+        out += ["-f", TMUX_CONF]
+    return out + list(args)
+
+
+def tmux(*args: str, check: bool = True) -> str:
+    r = subprocess.run(tmux_argv(*args), capture_output=True, text=True)
+    if check and r.returncode:
+        raise RuntimeError(f"tmux {shlex.join(args)}: {r.stderr.strip()}")
+    return r.stdout
+
+
+def server_running() -> bool:
+    return subprocess.run(tmux_argv("list-sessions"), capture_output=True).returncode == 0
+
+
+def read(path: Path | str) -> str:
+    try:
+        with open(path, errors="replace") as f:
+            return f.read()
+    except OSError:
+        return ""
+
+
+def cmdline(pid: int) -> list[str]:
+    raw = read(f"/proc/{pid}/cmdline")
+    return raw.split("\0")[:-1] if raw else []
+
+
+def environ(pid: int) -> dict[str, str]:
+    out = {}
+    for item in read(f"/proc/{pid}/environ").split("\0"):
+        k, sep, v = item.partition("=")
+        if sep:
+            out[k] = v
+    return out
+
+
+def proc_stat(pid: int) -> tuple[str, int, int, int] | None:
+    """(comm, ppid, tpgid, starttime ticks)."""
+    raw = read(f"/proc/{pid}/stat")
+    if not raw:
+        return None
+    rest = raw[raw.rindex(")") + 2:].split()
+    return raw[raw.index("(") + 1:raw.rindex(")")], int(rest[1]), int(rest[5]), int(rest[19])
+
+
+def proc_cwd(pid: int) -> str:
+    try:
+        return os.readlink(f"/proc/{pid}/cwd")
+    except OSError:
+        return ""
+
+
+def children(pid: int) -> list[int]:
+    out = []
+    with contextlib.suppress(OSError):
+        for tid in os.listdir(f"/proc/{pid}/task"):
+            out += [int(c) for c in read(f"/proc/{pid}/task/{tid}/children").split()]
+    return out
+
+
+def descendants(pid: int, depth: int = 4) -> list[int]:
+    out, frontier = [], [pid]
+    for _ in range(depth):
+        frontier = [c for p in frontier for c in children(p)]
+        out += frontier
+    return out
+
+
+def boot_id() -> str:
+    return read("/proc/sys/kernel/random/boot_id").strip()
+
+
+def boot_time() -> int:
+    for line in read("/proc/stat").splitlines():
+        if line.startswith("btime "):
+            return int(line.split()[1])
+    return 0
+
+
+def alive(pid: int, start: int | None = None) -> bool:
+    st = proc_stat(pid)
+    return bool(st) and (start is None or st[3] == start)
+
+
+@contextlib.contextmanager
+def locked(name: str) -> Iterator[bool]:
+    STATE.mkdir(parents=True, exist_ok=True)
+    with open(STATE / f"{name}.lock", "w") as fh:
+        try:
+            fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            yield False
+            return
+        yield True
+
+
+def atomic_write(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    with open(tmp, "w") as f:
+        f.write(text)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, path)
+
+
+def load_json(path: Path, default):
+    try:
+        return json.loads(path.read_text())
+    except (OSError, ValueError):
+        return default
+
+
+def port_open(port: int) -> bool:
+    with socket.socket() as s:
+        s.settimeout(0.5)
+        return s.connect_ex(("127.0.0.1", port)) == 0
+
+
+def listening_ports() -> dict[int, int]:
+    """pid -> a TCP port it listens on, from /proc (no dependency on ss/netstat being on PATH)."""
+    inode_port: dict[str, int] = {}
+    for table in ("/proc/net/tcp", "/proc/net/tcp6"):
+        for line in read(table).splitlines()[1:]:
+            f = line.split()
+            if len(f) > 9 and f[3] == "0A":                     # 0A = LISTEN
+                inode_port[f[9]] = int(f[1].rsplit(":", 1)[1], 16)
+    out: dict[int, int] = {}
+    uid = os.getuid()
+    for name in os.listdir("/proc"):
+        if not name.isdigit():
+            continue
+        with contextlib.suppress(OSError):
+            if os.stat(f"/proc/{name}").st_uid != uid:
+                continue
+            for fd in os.listdir(f"/proc/{name}/fd"):
+                link = os.readlink(f"/proc/{name}/fd/{fd}")
+                if link.startswith("socket:[") and link[8:-1] in inode_port:
+                    out.setdefault(int(name), inode_port[link[8:-1]])
+    return out
+
+
+# --------------------------------------------------------------------------- agents
+
+INTERPRETERS = re.compile(r"^(python[0-9.]*|node|bun|deno)$")
+
+
+def agent_kind(argv: list[str]) -> str | None:
+    if not argv:
+        return None
+    exe, rest = os.path.basename(argv[0]), argv[1:]
+    if INTERPRETERS.match(exe) and rest and not rest[0].startswith("-"):
+        exe, rest = os.path.basename(rest[0]), rest[1:]   # `node .../claude` style launches
+    if exe in ("claude", "claude.exe"):
+        return None if {"-p", "--print"} & set(rest) else "claude"
+    if exe == "copilot":
+        oneshot = {"-p", "--prompt", "--acp"} & set(rest) or any(a.startswith("--prompt=") for a in rest)
+        return None if oneshot else "copilot"
+    return None
+
+
+def agent_argv(argv: list[str]) -> list[str]:
+    """argv starting at the agent itself (drops a leading interpreter)."""
+    if argv and INTERPRETERS.match(os.path.basename(argv[0])) and len(argv) > 1:
+        return argv[1:]
+    return argv
+
+
+def argv_session_id(argv: list[str]) -> str | None:
+    for i, a in enumerate(argv):
+        if a in ("-r", "--resume", "--session-id") and i + 1 < len(argv) and re.fullmatch(UUID, argv[i + 1]):
+            return argv[i + 1]
+        if a.startswith(("--resume=", "--session-id=")) and re.fullmatch(UUID, a.split("=", 1)[1]):
+            return a.split("=", 1)[1]
+    return None
+
+
+def claude_session(pids: list[int]) -> tuple[str | None, str | None, str]:
+    for pid in pids:
+        d = load_json(CLAUDE_HOME / "sessions" / f"{pid}.json", None)
+        if not d or d.get("kind", "interactive") != "interactive":
+            continue
+        st = proc_stat(pid)
+        if not st or str(st[3]) != str(d.get("procStart", st[3])):
+            continue
+        return d.get("sessionId"), d.get("cwd"), f"sessions/{pid}.json"
+    return None, None, ""
+
+
+def copilot_logs(pid: int) -> list[Path]:
+    """Current then rotated process logs of this exact process, newest first."""
+    st = proc_stat(pid)
+    if not st:
+        return []
+    started_ms = (boot_time() + st[3] // CLK_TCK) * 1000
+    out = []
+    for f in (COPILOT_HOME / "logs").glob(f"process-*-{pid}*.log"):
+        m = re.fullmatch(rf"process-(\d+)-{pid}(?:\.(\d+))?\.log", f.name)
+        if m and abs(int(m.group(1)) - started_ms) < 120_000:
+            out.append((-int(m.group(2) or 0), f))      # oldest rotation first, current log last
+    return [f for _, f in sorted(out)]
+
+
+def copilot_session(pids: list[int]) -> tuple[str | None, str]:
+    """Current foreground session of this exact process.
+
+    The logs (rotated .N.log oldest -> current .log) are read in time order and the
+    last Registering/Unregistering line wins. Logs reach tens of MB, so each is scanned
+    incrementally: per (pid, start time, file) the byte offset and the state at that
+    offset are cached.
+    """
+    cache_path = STATE / "copilot-scan.json"
+    cache = load_json(cache_path, {})
+    for pid in pids:
+        st = proc_stat(pid)
+        sid, src = None, ""
+        for f in copilot_logs(pid):
+            key = f"{pid}:{st[3] if st else 0}:{f.name}"
+            offset, file_sid, file_events = cache.get(key, (0, None, False))
+            try:
+                if f.stat().st_size < offset:
+                    offset, file_sid, file_events = 0, None, False
+                with open(f, "rb") as fh:
+                    fh.seek(offset)
+                    for raw in fh:
+                        if not raw.endswith(b"\n"):
+                            break                      # partial line; read it next time
+                        offset += len(raw)
+                        if b"foreground session:" not in raw:
+                            continue
+                        m = re.search(rf"(Registering|Unregistering) foreground session: ({UUID})",
+                                      raw.decode(errors="replace"))
+                        if m:
+                            file_events = True
+                            file_sid = m.group(2) if m.group(1) == "Registering" else (
+                                None if file_sid == m.group(2) else file_sid)
+            except OSError:
+                continue
+            cache[key] = (offset, file_sid, file_events)
+            if file_events:                            # a later file's events supersede earlier ones
+                sid, src = file_sid, f"logs/{f.name}"
+        if sid:
+            break
+    live = {n for n in os.listdir("/proc") if n.isdigit()}
+    with contextlib.suppress(OSError):
+        atomic_write(cache_path, json.dumps({k: v for k, v in cache.items() if k.split(":", 1)[0] in live}))
+    return (sid, src) if sid else (None, "")
+
+
+def env_overlay(agent_pid: int, shell_pid: int) -> tuple[dict[str, str], list[str]]:
+    agent_env, shell_env = environ(agent_pid), environ(shell_pid)
+    keep = {k: v for k, v in agent_env.items()
+            if k.startswith(ENV_KEEP) and not ENV_SECRET.search(k) and not ENV_RUNTIME.match(k)
+            and shell_env.get(k) != v}
+    unset = sorted(k for k in shell_env
+                   if (k.startswith(ENV_KEEP) or k in PROXY_VARS) and k not in agent_env)
+    return keep, unset
+
+
+def resolve_exe(pid: int, argv0: str) -> str:
+    """Absolute path that launched argv0, via the process's own PATH (symlinks and shims kept)."""
+    if os.sep in argv0:
+        return os.path.abspath(os.path.join(proc_cwd(pid), argv0))
+    return shutil.which(argv0, path=environ(pid).get("PATH", "")) or argv0
+
+
+def detect_agent(pane_pid: int) -> dict | None:
+    for pid in [pane_pid, *descendants(pane_pid)]:
+        kind = agent_kind(cmdline(pid))
+        if not kind:
+            continue
+        argv = agent_argv(cmdline(pid))
+        tree = [pid, *descendants(pid, 2)]
+        if kind == "claude":
+            sid, cwd, src = claude_session(tree)
+        else:
+            (sid, src), cwd = copilot_session(tree), None
+        if not sid and (sid := argv_session_id(argv)):
+            src = "argv"
+        env, unset = env_overlay(pid, pane_pid)
+        st = proc_stat(pid)
+        return dict(kind=kind, pid=pid, start=st[3] if st else 0, argv=argv, exe=resolve_exe(pid, argv[0]),
+                    session_id=sid, id_source=src,
+                    cwd=cwd or proc_cwd(pid),
+                    env=env, unset=unset)
+    return None
+
+
+def resume_argv(agent: dict) -> list[str]:
+    """The saved argv rewritten to resume exactly agent['session_id']."""
+    kind, argv, sid = agent["kind"], agent["argv"], agent.get("session_id")
+    arity, strip = (CLAUDE_ARITY, CLAUDE_STRIP) if kind == "claude" else (COPILOT_ARITY, COPILOT_STRIP)
+    exe = agent.get("exe") or kind
+    out, i = [exe if os.access(exe, os.X_OK) else kind], 1
+    while i < len(argv):
+        a = argv[i]
+        if not a.startswith("-") or a == "-":
+            i += 1                      # positional: an initial prompt, never replayed
+            continue
+        name = a.split("=", 1)[0]
+        n = arity.get(name, 0)
+        take = 0
+        if "=" not in a:
+            if n == 1:
+                take = 1
+            elif n == "?":
+                take = int(i + 1 < len(argv) and not argv[i + 1].startswith("-"))
+            elif n in ("+", "*"):
+                while i + 1 + take < len(argv) and not argv[i + 1 + take].startswith("-"):
+                    take += 1
+        if name not in strip:
+            out += argv[i:i + 1 + take]
+        i += 1 + take
+    return out + ["--resume", sid] if sid else out
+
+
+# --------------------------------------------------------------------------- snapshot
+
+PANE_FIELDS = [
+    ("session", "#{session_name}"), ("window", "#{window_index}"), ("window_name", "#{window_name}"),
+    ("auto_rename", "#{automatic-rename}"), ("layout", "#{window_layout}"), ("window_active", "#{window_active}"),
+    ("zoomed", "#{window_zoomed_flag}"), ("pane", "#{pane_index}"), ("pane_id", "#{pane_id}"),
+    ("pane_active", "#{pane_active}"), ("pane_pid", "#{pane_pid}"), ("cwd", "#{pane_current_path}"),
+    ("title", "#{pane_title}"), ("current_command", "#{pane_current_command}"),
+    ("session_active", "#{?session_attached,1,0}"),
+]
+INTS = {"window", "pane", "pane_pid"}
+BOOLS = {"auto_rename", "window_active", "zoomed", "pane_active", "session_active"}
+
+
+def list_panes() -> list[dict]:
+    fmt = SEP.join(f for _, f in PANE_FIELDS)
+    rows = []
+    for line in tmux("list-panes", "-a", "-F", fmt).splitlines():
+        vals = line.split(SEP)
+        if len(vals) != len(PANE_FIELDS):
+            continue
+        row = {}
+        for (k, _), v in zip(PANE_FIELDS, vals):
+            row[k] = int(v) if k in INTS else (v == "1") if k in BOOLS else v
+        rows.append(row)
+    return rows
+
+
+def pane_busy(pane_pid: int) -> bool:
+    """False only for a shell idle at its prompt: foreground group is the shell, no children."""
+    st = proc_stat(pane_pid)
+    if not st or st[0] not in SHELLS:
+        return True
+    return st[2] != pane_pid or bool(children(pane_pid))
+
+
+def detect_service(pane_pid: int, ports: dict[int, int]) -> dict | None:
+    rules = config().get("services", [])
+    for pid in [pane_pid, *descendants(pane_pid, 3)]:
+        argv = cmdline(pid)
+        line = shlex.join(argv)
+        rule = next((r for r in rules if re.search(r["match"], line)), None)
+        if not rule:
+            continue
+        env, unset = env_overlay(pid, pane_pid)
+        env.update({k: v for k, v in environ(pid).items()
+                    if k in rule.get("env", []) and environ(pane_pid).get(k) != v})
+        argv = [resolve_exe(pid, argv[0]), *argv[1:]]
+        return dict(argv=argv, cwd=proc_cwd(pid), env=env, unset=unset, port=ports.get(pid),
+                    name=rule.get("name", os.path.basename(argv[0])))
+    return None
+
+
+def key_of(p: dict) -> str:
+    return f"{p['session']}:{p['window']}.{p['pane']}"
+
+
+PENDING_GRACE = 600   # seconds a resumed agent may take to show up before it is dropped
+
+
+def pending_add(session_id: str, key: str) -> None:
+    pend = load_json(STATE / "pending.json", {})
+    pend[key] = dict(session_id=session_id, at=time.time())
+    atomic_write(STATE / "pending.json", json.dumps(pend))
+
+
+def build_manifest(prev: dict | None) -> dict:
+    prev_agents = {key_of(p): p["agent"] for p in (prev or {}).get("panes", []) if p.get("agent")}
+    pending = {k: v for k, v in load_json(STATE / "pending.json", {}).items()
+               if time.time() - v["at"] < PENDING_GRACE}
+    ports = listening_ports() if config().get("services") else {}
+    panes = list_panes()
+    for p in panes:
+        p["agent"] = detect_agent(p["pane_pid"])
+        p["busy"] = pane_busy(p["pane_pid"])
+        p["service"] = None if p["agent"] else detect_service(p["pane_pid"], ports)
+        a, old = p["agent"], prev_agents.get(key_of(p))
+        if a and not a["session_id"] and old and old["kind"] == a["kind"] and old.get("session_id") \
+                and a["start"] == old.get("start"):
+            a["session_id"], a["id_source"] = old["session_id"], "previous manifest (same process)"
+        pend = pending.get(key_of(p))
+        if not a and old and pend and pend["session_id"] == old.get("session_id") \
+                and time.time() - pend["at"] < PENDING_GRACE:
+            p["agent"] = old                 # resume still starting (login shell, trust prompt): keep it
+        elif a and pend and a.get("session_id") == pend["session_id"]:
+            pending.pop(key_of(p), None)
+        if p["busy"] and not a and not p["service"]:
+            st = proc_stat(p["pane_pid"])
+            p["foreground"] = cmdline(st[2]) if st and st[2] > 0 else []
+    with contextlib.suppress(OSError):
+        atomic_write(STATE / "pending.json", json.dumps(pending))
+    return dict(schema=SCHEMA, host=socket.gethostname(), boot_id=boot_id(),
+                taken_at=dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
+                tmux_pid=server_pid(), panes=panes)
+
+
+def fingerprint(m: dict) -> str:
+    return json.dumps([(key_of(p), p["window_name"], p["layout"], p["cwd"],
+                        (p.get("agent") or {}).get("session_id"), (p.get("agent") or {}).get("kind"),
+                        bool(p.get("service"))) for p in m["panes"]])
+
+
+def cmd_snapshot(args: argparse.Namespace) -> int:
+    if TMUX_SOCKET is None and os.environ.get("TMUX") and not os.environ["TMUX"].startswith(
+            f"{os.environ.get('TMUX_TMPDIR', '/tmp')}/tmux-{os.getuid()}/default,"):
+        return 0          # called from a pane of a private tmux server (e.g. resurrect hook there)
+    if not server_running():
+        if not getattr(args, "quiet", False):
+            say("tmux server not running; existing manifest kept")
+        return 0
+    with locked("snapshot") as ok:
+        if not ok or restoring():
+            return 0
+        current = STATE / "current.json"
+        prev = load_json(current, None)
+        m = build_manifest(prev)
+        if not m["panes"]:
+            return 0
+        changed = prev is None or fingerprint(prev) != fingerprint(m) or prev.get("boot_id") != m["boot_id"]
+        atomic_write(current, json.dumps(m, indent=1))
+        if changed:
+            hist = STATE / "history"
+            atomic_write(hist / f"{m['taken_at'].replace(':', '').replace('-', '')[:15]}.json",
+                         json.dumps(m, indent=1))
+            for old in sorted(hist.glob("*.json"))[:-KEEP_HISTORY]:
+                old.unlink()
+            log(f"snapshot changed: {len(m['panes'])} panes, {sum(bool(p['agent']) for p in m['panes'])} agents")
+        record_seen(m)
+        if not getattr(args, "quiet", False):
+            say(f"{len(m['panes'])} panes, {sum(bool(p['agent']) for p in m['panes'])} agents"
+                f"{' (changed)' if changed else ''} -> {current}")
+    return 0
+
+
+def record_seen(m: dict) -> None:
+    path = STATE / "seen.json"
+    seen = load_json(path, {})
+    for p in m["panes"]:
+        a = p.get("agent")
+        if a and a.get("session_id"):
+            seen[a["session_id"]] = dict(kind=a["kind"], cwd=a["cwd"], where=key_of(p),
+                                         window_name=p["window_name"], argv=a["argv"], env=a["env"],
+                                         unset=a["unset"], last_seen=m["taken_at"])
+    cutoff = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=SEEN_DAYS)).isoformat()
+    atomic_write(path, json.dumps({k: v for k, v in seen.items() if v["last_seen"] >= cutoff}, indent=1))
+
+
+# --------------------------------------------------------------------------- restore
+
+def restoring() -> bool:
+    try:
+        return alive(int((STATE / "restoring").read_text()))
+    except (OSError, ValueError):
+        return False
+
+
+def load_manifest(ref: str | None) -> dict:
+    if not ref:
+        m = load_json(STATE / "current.json", None)
+        if not m:
+            raise SystemExit("no manifest; run `agentctl snapshot` first")
+        return m
+    if Path(ref).is_file():
+        return json.loads(Path(ref).read_text())
+    want = re.sub(r"[^0-9T]", "", ref)
+    hits = [h for h in sorted((STATE / "history").glob("*.json")) if h.stem.startswith(want)]
+    if not hits:
+        raise SystemExit(f"no manifest matches {ref!r}; see `agentctl history`")
+    return json.loads(hits[-1].read_text())
+
+
+def running_sessions() -> set[str]:
+    """Agent session ids that some live process is using right now."""
+    ids = set()
+    for f in (CLAUDE_HOME / "sessions").glob("*.json"):
+        d = load_json(f, {})
+        st = proc_stat(int(d.get("pid") or 0))
+        if st and str(st[3]) == str(d.get("procStart")) and d.get("sessionId"):
+            ids.add(d["sessionId"])
+    for lock in (COPILOT_HOME / "session-state").glob("*/inuse.*.lock"):
+        m = re.fullmatch(r"inuse\.(\d+)\.lock", lock.name)
+        with contextlib.suppress(OSError):
+            if m and alive(int(m.group(1))) and lock.stat().st_mtime >= boot_time():
+                ids.add(lock.parent.name)
+    if server_running():
+        for p in list_panes():
+            a = detect_agent(p["pane_pid"])
+            if a and a["session_id"]:
+                ids.add(a["session_id"])
+    return ids
+
+
+def stale_locks(session_id: str) -> list[Path]:
+    out = []
+    for lock in (COPILOT_HOME / "session-state" / session_id).glob("inuse.*.lock"):
+        m = re.fullmatch(r"inuse\.(\d+)\.lock", lock.name)
+        with contextlib.suppress(OSError):
+            if m and (not alive(int(m.group(1))) or lock.stat().st_mtime < boot_time()):
+                out.append(lock)
+    return out
+
+
+@dataclasses.dataclass
+class Plan:
+    create: list[tuple[str, str, dict]] = dataclasses.field(default_factory=list)   # (level, key, pane)
+    services: list[tuple[str, dict, str]] = dataclasses.field(default_factory=list)  # (key, pane, live pane id)
+    agents: list[tuple[str, dict, str]] = dataclasses.field(default_factory=list)
+    locks: list[Path] = dataclasses.field(default_factory=list)
+    notes: list[tuple[str, str]] = dataclasses.field(default_factory=list)
+
+    def empty(self) -> bool:
+        return not (self.create or self.services or self.agents or self.locks)
+
+    def lines(self) -> Iterator[str]:
+        for level, key, p in self.create:
+            yield f"create   {key:16} {level:7} {p['cwd']}"
+        for key, p, _ in self.services:
+            s = p["service"]
+            yield f"service  {key:16} :{s.get('port') or '-'} {shlex.join(s['argv'])}"
+        for key, p, _ in self.agents:
+            yield f"resume   {key:16} {shlex.join(resume_argv(p['agent']))}"
+        for lock in self.locks:
+            yield f"unlock   {lock}"
+        for key, why in self.notes:
+            yield f"skip     {key:16} {why}"
+
+
+def plan_restore(m: dict, only: set[str], into_running: bool) -> Plan:
+    plan = Plan()
+    live = {key_of(p): p for p in list_panes()} if server_running() else {}
+    have_sessions = {p["session"] for p in live.values()}
+    have_windows = {(p["session"], p["window"]) for p in live.values()}
+    busy_ids = running_sessions()
+    claimed: set[str] = set()
+    for p in m["panes"]:
+        if only and p["session"] not in only:
+            continue
+        key, a, svc, lp = key_of(p), p.get("agent"), p.get("service"), live.get(key_of(p))
+        if lp is None:
+            level = ("pane" if (p["session"], p["window"]) in have_windows
+                     else "window" if p["session"] in have_sessions else "session")
+            plan.create.append((level, key, p))
+            have_sessions.add(p["session"])
+            have_windows.add((p["session"], p["window"]))
+        elif not into_running or (not a and not svc):
+            continue
+        elif not settled_idle(lp["pane_pid"]):
+            plan.notes.append((key, f"pane busy or shell still starting ({lp['current_command']}); not touched"))
+            continue
+        target = lp["pane_id"] if lp else ""
+        if a:
+            sid = a.get("session_id")
+            if not sid:
+                plan.notes.append((key, f"{a['kind']}: session id unknown; not guessing (agentctl lost)"))
+            elif sid in busy_ids:
+                plan.notes.append((key, f"{a['kind']} {sid[:8]} already running elsewhere"))
+            elif sid in claimed:
+                plan.notes.append((key, f"{a['kind']} {sid[:8]} was open in two panes; resumed once"))
+            else:
+                claimed.add(sid)
+                plan.agents.append((key, p, target))
+                if a["kind"] == "copilot":
+                    plan.locks += stale_locks(sid)
+        elif svc:
+            if svc.get("port") and port_open(svc["port"]):
+                plan.notes.append((key, f"{svc['name']} :{svc['port']} already listening"))
+            else:
+                plan.services.append((key, p, target))
+    return plan
+
+
+def pane_shell() -> str:
+    return (os.environ.get("AGENTCTL_PANE_SHELL")
+            or tmux("show", "-gv", "default-shell", check=False).strip() or "/bin/bash")
+
+
+def pane_command(argv: list[str], env: dict[str, str], unset: list[str]) -> str:
+    """Run argv in an interactive login shell, then drop to a shell when it exits."""
+    shell = pane_shell()
+    prefix = ["env", *[x for k in unset for x in ("-u", k)], *[f"{k}={v}" for k, v in sorted(env.items())]]
+    inner = shlex.join((prefix if len(prefix) > 1 else []) + argv) + f"; exec {shlex.quote(shell)} -l"
+    return f"exec {shlex.quote(shell)} -lic {shlex.quote(inner)}"
+
+
+def new_server_session(args: list[str]) -> None:
+    """Start the tmux server under a login shell, in its own systemd scope when possible.
+
+    A server forked from the tick oneshot must not live in that unit's cgroup, and it
+    needs the login environment so panes find claude/copilot on PATH.
+    """
+    # -i: ~/.bashrc returns early for non-interactive shells, and it is where the CUDA,
+    # TensorRT and LD_LIBRARY_PATH settings the panes normally inherit come from.
+    cmd = ["bash", "-lic", "exec " + shlex.join(tmux_argv("new-session", *args, conf=True))]
+    if shutil.which("systemd-run") and not os.environ.get("AGENTCTL_NO_SCOPE"):
+        # OOMPolicy=continue: an OOM kill of one pane process must not stop the scope,
+        # which would kill the tmux server and every pane in it (the default is stop).
+        scoped = ["systemd-run", "--user", "--scope", "--quiet", "--collect", "-p", "OOMPolicy=continue",
+                  f"--unit=tmux-server-{os.getpid()}-{int(time.time())}", *cmd]
+        if subprocess.run(scoped, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                          stderr=subprocess.DEVNULL).returncode == 0 and server_running():
+            return
+        log("systemd-run --scope failed; starting tmux server without a scope")
+    subprocess.run(cmd, check=True, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                   start_new_session=True)
+
+
+def create_structure(plan: Plan) -> dict[str, str]:
+    """Create missing sessions/windows/panes; returns manifest key -> new pane id."""
+    made: dict[str, str] = {}
+    last_in_window: dict[tuple[str, int], str] = {}
+    for level, key, p in plan.create:
+        s, w = p["session"], p["window"]
+        if level == "session":
+            args = ["-d", "-s", s, "-x", "215", "-y", "53", "-c", p["cwd"], "-P", "-F", "#{window_index} #{pane_id}"]
+            if server_running():
+                out = tmux("new-session", *args)
+            else:
+                new_server_session(args[:-3])
+                out = tmux("list-panes", "-t", f"={s}:", "-F", "#{window_index} #{pane_id}")
+            first, pid = out.split()[:2]
+            if int(first) != w:
+                tmux("move-window", "-s", f"={s}:{first}", "-t", f"={s}:{w}")
+        elif level == "window":
+            pid = tmux("new-window", "-d", "-t", f"={s}:{w}", "-c", p["cwd"], "-P", "-F", "#{pane_id}").strip()
+        else:
+            anchor = last_in_window.get((s, w)) or tmux(
+                "list-panes", "-t", f"={s}:{w}", "-F", "#{pane_id}").split()[-1]
+            pid = tmux("split-window", "-d", "-t", anchor, "-c", p["cwd"], "-P", "-F", "#{pane_id}").strip()
+            tmux("select-layout", "-t", f"={s}:{w}", "tiled", check=False)
+        made[key] = pid
+        last_in_window[(s, w)] = pid
+    return made
+
+
+def finish_windows(m: dict, plan: Plan) -> None:
+    """Layout, names and titles for windows this restore created. Focus (active
+    window/pane, zoom) is only restored in sessions this restore created, so a
+    client attached to an existing session is never moved."""
+    new_sessions = {p["session"] for level, _, p in plan.create if level == "session"}
+    touched = {(p["session"], p["window"]) for _, _, p in plan.create}
+    for (s, w) in touched:
+        panes = [p for p in m["panes"] if (p["session"], p["window"]) == (s, w)]
+        live_count = len(tmux("list-panes", "-t", f"={s}:{w}", "-F", "x", check=False).split())
+        if live_count == len(panes):
+            tmux("select-layout", "-t", f"={s}:{w}", panes[0]["layout"], check=False)
+        if not panes[0]["auto_rename"]:
+            tmux("rename-window", "-t", f"={s}:{w}", panes[0]["window_name"], check=False)
+        for p in panes:
+            if p["title"]:
+                tmux("select-pane", "-t", f"={s}:{w}.{p['pane']}", "-T", p["title"], check=False)
+        if s not in new_sessions:
+            continue
+        for p in panes:
+            if p["pane_active"]:
+                tmux("select-pane", "-t", f"={s}:{w}.{p['pane']}", check=False)
+        if panes[0]["window_active"]:
+            tmux("select-window", "-t", f"={s}:{w}", check=False)
+        if panes[0]["zoomed"]:
+            tmux("resize-pane", "-Z", "-t", f"={s}:{w}", check=False)
+
+
+IDLE_MIN_AGE = int(os.environ.get("AGENTCTL_IDLE_MIN_AGE", 30))   # seconds before a shell counts as idle
+
+
+def settled_idle(pane_pid: int) -> bool:
+    """Idle at a prompt, and old enough that its rc files (and any auto-start) are done."""
+    st = proc_stat(pane_pid)
+    if not st or pane_busy(pane_pid):
+        return False
+    uptime = float(read("/proc/uptime").split()[0] or 0)
+    return uptime - st[3] / CLK_TCK >= IDLE_MIN_AGE
+
+
+def respawn(target: str, cwd: str, argv: list[str], env: dict, unset: list[str], expect_idle: bool) -> bool:
+    """Replace the pane's process with argv. For a pane that existed before this restore,
+    only if its shell is settled at an idle prompt, checked immediately before acting."""
+    if expect_idle:
+        pid = int(tmux("display", "-p", "-t", target, "#{pane_pid}").strip() or 0)
+        if not settled_idle(pid):
+            log(f"{target} not idle (or shell still starting); not respawning")
+            return False
+    cwd = cwd if os.path.isdir(cwd) else str(HOME)
+    tmux("respawn-pane", "-k", "-t", target, "-c", cwd, pane_command(argv, env, unset))
+    return True
+
+
+def apply_plan(m: dict, plan: Plan, mark: bool = False) -> None:
+    for lock in plan.locks:
+        lock.unlink(missing_ok=True)
+        log(f"removed stale lock {lock}")
+    made = create_structure(plan)
+    if mark and server_running():
+        atomic_write(STATE / "restored-for", server_mark(server_pid()))
+    finish_windows(m, plan)
+    ports = []
+    for key, p, live_id in plan.services:
+        s = p["service"]
+        try:
+            if respawn(made.get(key) or live_id, s["cwd"], s["argv"], s["env"], s["unset"], not made.get(key)):
+                log(f"service {key}: {shlex.join(s['argv'])}")
+                if s.get("port"):
+                    ports.append(s["port"])
+        except RuntimeError as exc:
+            log(f"service {key} not started: {exc}")
+    deadline = time.time() + 20
+    while ports and time.time() < deadline:
+        ports = [port for port in ports if not port_open(port)]
+        time.sleep(0.25)
+    if ports:
+        log(f"services not listening after 20s: {ports}; resuming agents anyway")
+    busy_now = running_sessions()                    # re-check right before acting
+    for key, p, live_id in plan.agents:
+        a = p["agent"]
+        if a["session_id"] in busy_now:
+            log(f"{key}: {a['session_id']} started elsewhere meanwhile; skipped")
+            continue
+        argv = resume_argv(a)
+        try:
+            if respawn(made.get(key) or live_id, a["cwd"] or p["cwd"], argv, a["env"], a["unset"], not made.get(key)):
+                log(f"resumed {key}: {shlex.join(argv)}")
+                pending_add(a["session_id"], key)
+        except RuntimeError as exc:
+            log(f"resume {key} failed: {exc}")
+
+
+def cmd_restore(args: argparse.Namespace) -> int:
+    m = load_manifest(args.at)
+    with locked("restore") as ok:
+        if not ok:
+            say("another restore is running")
+            return 1
+        plan = plan_restore(m, set(args.session or []), args.into_running)
+        for line in plan.lines():
+            say(("would " if args.dry_run else "") + line)
+        if plan.empty():
+            if getattr(args, "mark_server", False) and server_running():
+                atomic_write(STATE / "restored-for", server_mark(server_pid()))
+            say("nothing to restore")
+            return 0
+        if args.dry_run:
+            return 0
+        atomic_write(STATE / "restoring", str(os.getpid()))
+        try:
+            log(f"restore from manifest {m['taken_at']}: {len(plan.create)} create, "
+                f"{len(plan.services)} services, {len(plan.agents)} agents")
+            apply_plan(m, plan, mark=getattr(args, "mark_server", False))
+        finally:
+            (STATE / "restoring").unlink(missing_ok=True)
+    say(f"restored: {len(plan.create)} panes created, {len(plan.services)} services, {len(plan.agents)} agents")
+    return 0
+
+
+def server_pid() -> int:
+    return int(tmux("display", "-p", "#{pid}", check=False).strip() or 0)
+
+
+def cmd_tick(args: argparse.Namespace) -> int:
+    """Every minute: restore after the tmux server is lost or replaced, then snapshot.
+
+    A replaced server (reboot, crash, kill-server, or a layout-only restore such as a
+    bare `tmux` or tmux-resurrect) is detected by its pid. Each server gets at most one
+    automatic restore attempt; the attempt is recorded before it runs, so a restore that
+    fails is never retried in a loop. Further restores are manual (`agentctl restore`).
+    """
+    m = load_json(STATE / "current.json", None)
+    if m and not (STATE / "paused").exists() and not restoring():
+        attempted = read(STATE / "restored-for").strip()
+        try:
+            if not server_running():
+                log("tmux server is gone; restoring")
+                cmd_restore(argparse.Namespace(at=None, session=[], into_running=False, dry_run=False,
+                                               mark_server=True))
+            else:
+                srv = server_pid()
+                if srv and m.get("tmux_pid") not in (srv, 0) and attempted != server_mark(srv):
+                    log(f"tmux server changed ({m.get('tmux_pid')} -> {srv}); filling in missing panes")
+                    cmd_restore(argparse.Namespace(at=None, session=[], into_running=True, dry_run=False,
+                                                   mark_server=True))
+        except Exception as exc:                       # never let a failed restore block snapshots
+            log(f"restore failed: {exc!r}")
+        if read(STATE / "restored-for").strip() != attempted:
+            time.sleep(10)                             # let resumed agents register before snapshotting
+    return cmd_snapshot(argparse.Namespace(quiet=True))
+
+
+def server_mark(pid: int) -> str:
+    st = proc_stat(pid)
+    return f"{pid}:{st[3] if st else 0}"
+
+
+def cmd_pause(args: argparse.Namespace) -> int:
+    if args.cmd == "pause":
+        (STATE / "paused").touch()
+        say("automatic restore paused; `agentctl unpause` to re-enable")
+    else:
+        (STATE / "paused").unlink(missing_ok=True)
+        say("automatic restore enabled")
+    return 0
+
+
+# --------------------------------------------------------------------------- reporting
+
+def cmd_status(args: argparse.Namespace) -> int:
+    m = load_json(STATE / "current.json", None)
+    if not m:
+        say("no manifest yet; run `agentctl snapshot`")
+        return 1
+    age = int(time.time() - (STATE / "current.json").stat().st_mtime)
+    say(f"manifest {m['taken_at']} ({age}s ago)  boot {m['boot_id'][:8]}  "
+        f"{'paused' if (STATE / 'paused').exists() else 'auto-restore on'}")
+    live = {key_of(p) for p in list_panes()} if server_running() else set()
+    by_sid: dict[str, list[str]] = {}
+    for p in m["panes"]:
+        a, s = p.get("agent"), p.get("service")
+        if a:
+            what = f"{a['kind']} {(a.get('session_id') or 'unknown')[:8]}"
+            if a.get("session_id"):
+                by_sid.setdefault(a["session_id"], []).append(key_of(p))
+        elif s:
+            what = f"svc {s['name']} :{s.get('port') or '-'}"
+        else:
+            what = os.path.basename((p.get("foreground") or [p["current_command"]])[0])
+        say(f"  {key_of(p):16} {'live' if key_of(p) in live else 'MISSING':8} {what:24.24} "
+            f"{p['window_name'][:22]:22} {p['cwd']}")
+    for sid, keys in by_sid.items():
+        if len(keys) > 1:
+            say(f"  ! {sid[:8]} is open in {len(keys)} panes ({', '.join(keys)}): two processes append to one "
+                "transcript; exit all but one")
+    return 0
+
+
+def cmd_lost(args: argparse.Namespace) -> int:
+    seen, live = load_json(STATE / "seen.json", {}), running_sessions()
+    rows = sorted(((v["last_seen"], k, v) for k, v in seen.items() if k not in live), reverse=True)
+    if not rows:
+        say("no lost sessions")
+    for last, sid, v in rows[:args.limit]:
+        cmd = shlex.join(resume_argv(dict(kind=v["kind"], argv=v["argv"], session_id=sid)))
+        envs = " ".join(f"{k}={shlex.quote(x)}" for k, x in sorted(v.get("env", {}).items()))
+        say(f"{last}  {v['kind']:7} {sid}  was {v['where']} ({v['window_name']})\n"
+            f"    cd {shlex.quote(v['cwd'])} && {envs + ' ' if envs else ''}{cmd}")
+    return 0
+
+
+def cmd_history(args: argparse.Namespace) -> int:
+    for h in sorted((STATE / "history").glob("*.json"))[-args.limit:]:
+        m = load_json(h, {"panes": [], "boot_id": ""})
+        say(f"{h.stem}  {len({p['session'] for p in m['panes']}):2} sessions  {len(m['panes']):3} panes  "
+            f"{sum(bool(p.get('agent')) for p in m['panes']):2} agents  boot {m['boot_id'][:8]}")
+    return 0
+
+
+def cmd_doctor(args: argparse.Namespace) -> int:
+    bad = 0
+
+    def check(ok: bool, msg: str, fix: str = "") -> None:
+        nonlocal bad
+        bad += not ok
+        say(f"{'ok  ' if ok else 'FAIL'}  {msg}" + ("" if ok else f"\n      -> {fix}"))
+
+    check(server_running(), "tmux server running", "agentctl restore")
+    cur = STATE / "current.json"
+    age = time.time() - cur.stat().st_mtime if cur.exists() else 1e9
+    check(age < 300, f"manifest {int(age)}s old", "systemctl --user status agentctl-tick.timer")
+    check(not (STATE / "paused").exists(), "auto-restore enabled", "agentctl unpause")
+    for unit in config().get("units", []):
+        r = subprocess.run(["systemctl", "--user", "is-active", unit], capture_output=True, text=True)
+        check(r.stdout.strip() == "active", f"{unit} active", f"systemctl --user enable --now {unit}")
+    m = load_json(cur, {"panes": []})
+    for p in m["panes"]:
+        s = p.get("service")
+        if s and s.get("port"):
+            check(port_open(s["port"]), f"{s['name']} listening on :{s['port']}", f"agentctl restore -s {p['session']}")
+    ids = [p["agent"]["session_id"] for p in m["panes"] if p.get("agent") and p["agent"].get("session_id")]
+    dups = sorted({i[:8] for i in ids if ids.count(i) > 1})
+    check(not dups, f"no session open in two panes ({len(ids)} agent panes)", f"{', '.join(dups)}: see agentctl status")
+    unknown = [key_of(p) for p in m["panes"] if p.get("agent") and not p["agent"].get("session_id")]
+    check(not unknown, "every agent pane has an exact session id", ", ".join(unknown))
+    du = shutil.disk_usage(HOME)
+    check(du.free / du.total > 0.05, f"home disk {du.used * 100 // du.total}% used, {du.free >> 30} GiB free",
+          "biggest: ~/.cache/uv, ~/.npm/_cacache, ~/.copilot/session-state/*/files")
+    mem = {k: int(v.split()[0]) for k, v in (l.split(":", 1) for l in read("/proc/meminfo").splitlines())}
+    check(mem["MemAvailable"] > 8 << 20, f"{mem['MemAvailable'] >> 20} GiB memory available",
+          "ps -eo rss,pid,comm --sort=-rss | head")
+    tmp = shutil.disk_usage("/tmp")
+    check(tmp.used < 8 << 30, f"/tmp (RAM-backed) holds {tmp.used >> 30} GiB", "du -xsh /tmp/* | sort -rh | head")
+    last = STATE / "backup.last"
+    bage = time.time() - last.stat().st_mtime if last.exists() else 1e9
+    check(bage < 3 * 3600, f"last transcript backup {int(bage // 60)} min ago", "agentctl backup")
+    return 1 if bad else 0
+
+
+# --------------------------------------------------------------------------- backup
+#
+# Transcripts are append-only JSONL, so backups store them as zstd shards keyed by
+# the byte offset where each shard starts: a backup run compresses only the complete
+# lines appended since the previous run. A file whose existing bytes changed
+# (rewrite, compaction, new inode) starts a new chain. Other files are stored whole,
+# deduplicated by content. Every run writes an index (file -> shards, size, sha256 of
+# the backed-up bytes). Recovery concatenates the shards of the newest index (or an
+# older one) and checks length and sha256 before replacing anything.
+#
+#   ~/.local/share/agentctl/backup/
+#       objects/<sha1(path)>/<chain>-<offset>.zst     appended bytes, compressed
+#       objects/<sha1(path)>/<chain>-full.zst         small non-append files, whole
+#       index/<UTC stamp>.json                        one per run
+#
+# The backup dir sits on the same disk as the data: it protects against agent,
+# tool or user deletion/corruption and VM restarts, not against disk loss.
+
+BACKUP = Path(os.environ.get("AGENTCTL_BACKUP", HOME / ".local/share/agentctl/backup"))
+BACKUP_DAYS = 30
+BACKUP_MIN_FREE = 10 << 30      # stop backing up below this much free disk: never be the thing that fills it
+KEEP_INDEX = dict(all_hours=48, daily_days=14, weekly_weeks=8)
+SMALL = 1 << 20
+ZSTD = shutil.which("zstd") or "/usr/bin/zstd"
+
+
+def file_sha(path: Path, limit: int) -> str:
+    """sha256 of the first `limit` bytes, streamed."""
+    import hashlib
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        while limit > 0:
+            block = f.read(min(4 << 20, limit))
+            if not block:
+                break
+            h.update(block)
+            limit -= len(block)
+    return h.hexdigest()
+
+
+def backup_files() -> list[Path]:
+    """Agent transcripts and state: live sessions plus anything touched in BACKUP_DAYS."""
+    cutoff = time.time() - BACKUP_DAYS * 86400
+    live = running_sessions()
+    out: list[Path] = []
+
+    def walk(d: Path) -> None:
+        for r, _, fs in os.walk(d):
+            for x in fs:
+                f = Path(r, x)
+                if not f.name.endswith((".lock", ".tmp")) and not f.is_symlink():
+                    out.append(f)
+
+    for proj in (CLAUDE_HOME / "projects").glob("*"):
+        for f in proj.glob("*.jsonl") if proj.is_dir() else []:
+            with contextlib.suppress(OSError):
+                if f.stem in live or f.stat().st_mtime >= cutoff:
+                    out.append(f)
+                    if (proj / f.stem).is_dir():
+                        walk(proj / f.stem)
+    for d in (COPILOT_HOME / "session-state").glob("*"):
+        if not d.is_dir():
+            continue
+        marks = [x.stat().st_mtime for x in (d / "events.jsonl", d / "workspace.yaml") if x.exists()]
+        if d.name in live or max(marks, default=0) >= cutoff:
+            for x in d.iterdir():
+                if x.is_file() and not x.name.endswith(".lock"):
+                    out.append(x)
+                elif x.is_dir() and x.name in ("checkpoints", "research", "evidence"):
+                    walk(x)
+    for x in (CLAUDE_HOME / "history.jsonl", COPILOT_HOME / "open-sessions-state.json",
+              COPILOT_HOME / "command-history-state.json", STATE / "current.json", STATE / "seen.json"):
+        if x.is_file():
+            out.append(x)
+    return out
+
+
+def zstd_bytes(data: bytes) -> bytes:
+    return subprocess.run([ZSTD, "-q", "-6", "-T2", "-c"], input=data, capture_output=True, check=True).stdout
+
+
+def unzstd(path: Path) -> bytes:
+    return subprocess.run([ZSTD, "-q", "-d", "-c", str(path)], capture_output=True, check=True).stdout
+
+
+def latest_index() -> dict:
+    idx = sorted((BACKUP / "index").glob("*.json"))
+    return load_json(idx[-1], {"files": {}}) if idx else {"files": {}}
+
+
+def backup_one(path: Path, prev: dict | None) -> dict | None:
+    """Back up one file; returns its index entry, or prev unchanged.
+
+    Only *.jsonl files are treated as append-only, and an append is accepted only if
+    the bytes already backed up are unchanged: same inode, not shorter, and the
+    sha256 of the whole old prefix still matches. Anything else is stored whole as a
+    new chain. Small files are stored whole and deduplicated by content hash.
+    """
+    import hashlib
+    st = path.stat()
+    if prev and prev["size"] == st.st_size and prev["mtime"] == st.st_mtime and prev.get("ino") == st.st_ino:
+        return prev
+    odir = BACKUP / "objects" / hashlib.sha1(str(path).encode()).hexdigest()
+    odir.mkdir(parents=True, exist_ok=True)
+    with open(path, "rb") as f:
+        if path.suffix != ".jsonl" or st.st_size <= SMALL:
+            data = f.read()
+            digest = hashlib.sha256(data).hexdigest()
+            obj = odir / f"{digest[:16]}-full.zst"
+            if not obj.exists():
+                atomic_bytes(obj, zstd_bytes(data))
+            return dict(size=len(data), mtime=st.st_mtime, ino=st.st_ino, sha=digest, shards=[[0, obj.name]])
+        h = hashlib.sha256()
+        start, chain, shards = 0, os.urandom(6).hex(), []
+        if prev and prev.get("chain") and prev.get("ino") == st.st_ino and st.st_size >= prev["size"]:
+            left = prev["size"]
+            while left:
+                block = f.read(min(4 << 20, left))
+                if not block:
+                    break
+                h.update(block)
+                left -= len(block)
+            if not left and h.hexdigest() == prev["sha"]:
+                start, chain, shards = prev["size"], prev["chain"], list(prev["shards"])
+            else:
+                h = hashlib.sha256()
+        f.seek(start)
+        size = start
+        while True:
+            data = f.read(64 << 20)
+            if not data:
+                break
+            nl = data.rfind(b"\n")                    # stop at the last complete line
+            if nl < 0:
+                break
+            data = data[:nl + 1]
+            atomic_bytes(odir / f"{chain}-{size:012d}.zst", zstd_bytes(data))
+            shards.append([size, f"{chain}-{size:012d}.zst"])
+            h.update(data)
+            size += len(data)
+            f.seek(size)
+    if not shards:
+        return prev
+    return dict(size=size, mtime=st.st_mtime, ino=st.st_ino, chain=chain, sha=h.hexdigest(), shards=shards)
+
+
+def atomic_bytes(path: Path, data: bytes) -> None:
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    with open(tmp, "wb") as f:
+        f.write(data)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, path)
+
+
+def prune_backups() -> int:
+    """Keep every index from the last 48h, one per day for 14d, one per week for 8w; drop orphan objects."""
+    now = dt.datetime.now(dt.timezone.utc)
+    keep, seen_day, seen_week = set(), set(), set()
+    for f in sorted((BACKUP / "index").glob("*.json"), reverse=True):
+        t = dt.datetime.strptime(f.stem, "%Y%m%dT%H%M%SZ").replace(tzinfo=dt.timezone.utc)
+        age = now - t
+        day, week = t.date(), t.isocalendar()[:2]
+        if age <= dt.timedelta(hours=KEEP_INDEX["all_hours"]):
+            keep.add(f)
+        elif age <= dt.timedelta(days=KEEP_INDEX["daily_days"]) and day not in seen_day:
+            keep.add(f)
+            seen_day.add(day)
+        elif age <= dt.timedelta(weeks=KEEP_INDEX["weekly_weeks"]) and week not in seen_week:
+            keep.add(f)
+            seen_week.add(week)
+    for f in (BACKUP / "index").glob("*.json"):
+        if f not in keep:
+            f.unlink()
+    live_objs = set()
+    for f in keep:
+        for path, e in load_json(f, {"files": {}})["files"].items():
+            import hashlib
+            k = hashlib.sha1(path.encode()).hexdigest()
+            live_objs.update(f"{k}/{name}" for _, name in e["shards"])
+    removed = 0
+    for odir in (BACKUP / "objects").glob("*"):
+        for obj in odir.iterdir():
+            stale_tmp = obj.name.endswith(".tmp") and time.time() - obj.stat().st_mtime > 3600
+            if stale_tmp or (obj.suffix == ".zst" and f"{odir.name}/{obj.name}" not in live_objs):
+                obj.unlink()
+                removed += 1
+        with contextlib.suppress(OSError):
+            odir.rmdir()
+    return removed
+
+
+def cmd_backup(args: argparse.Namespace) -> int:
+    with locked("backup") as ok:
+        if not ok:
+            return 0
+        BACKUP.mkdir(parents=True, exist_ok=True)
+        free = shutil.disk_usage(BACKUP).free
+        if free < BACKUP_MIN_FREE:
+            prune_backups()
+            log(f"backup skipped: {free >> 30} GiB free < {BACKUP_MIN_FREE >> 30} GiB")
+            if not args.quiet:
+                say(f"backup skipped: only {free >> 30} GiB free on {BACKUP}")
+            return 1
+        t0 = time.time()
+        prev = latest_index()["files"]
+        files, new_bytes, errors = {}, 0, 0
+        for path in backup_files():
+            old = prev.get(str(path))
+            try:
+                e = backup_one(path, old)
+            except (OSError, subprocess.CalledProcessError) as exc:
+                errors += 1
+                log(f"backup: {path}: {exc}")
+                e = old
+            if not e:
+                continue
+            if e is not old:
+                same_chain = old and e.get("chain") and e.get("chain") == old.get("chain")
+                new_bytes += e["size"] - old["size"] if same_chain else e["size"]
+            files[str(path)] = e
+        now = dt.datetime.now(dt.timezone.utc)
+        for path, e in prev.items():           # keep vanished files recoverable for BACKUP_DAYS
+            if path in files or Path(path).exists():
+                continue
+            gone = e.get("deleted_at") or now.isoformat(timespec="seconds")
+            if now - dt.datetime.fromisoformat(gone) < dt.timedelta(days=BACKUP_DAYS):
+                files[path] = dict(e, deleted_at=gone)
+        stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        atomic_write(BACKUP / "index" / f"{stamp}.json", json.dumps(dict(taken_at=stamp, files=files)))
+        (STATE / "backup.last").touch()
+        removed = prune_backups() if args.prune or not (STATE / "backup.pruned").exists() or \
+            time.time() - (STATE / "backup.pruned").stat().st_mtime > 86400 else 0
+        if removed or args.prune:
+            (STATE / "backup.pruned").touch()
+        msg = (f"backup {stamp}: {len(files)} files, {new_bytes >> 20} MiB new, {int(time.time() - t0)}s"
+               + (f", {errors} errors (see log)" if errors else ""))
+        log(msg + (f", pruned {removed} objects" if removed else ""))
+        if not args.quiet:
+            say(msg)
+    return 0
+
+
+def restore_file(entry: dict, path: str, dest: Path) -> None:
+    import hashlib
+    k = hashlib.sha1(path.encode()).hexdigest()
+    tmp = dest.with_name(f".{dest.name}.{os.getpid()}.tmp")
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    with open(tmp, "wb") as out:
+        for offset, name in entry["shards"]:
+            if out.tell() != offset:
+                raise SystemExit(f"{path}: shard {name} starts at {offset}, have {out.tell()}")
+            out.write(unzstd(BACKUP / "objects" / k / name))
+    if tmp.stat().st_size != entry["size"] or file_sha(tmp, entry["size"]) != entry["sha"]:
+        tmp.unlink()
+        raise SystemExit(f"{path}: restored bytes failed verification")
+    os.replace(tmp, dest)
+
+
+def cmd_recover(args: argparse.Namespace) -> int:
+    idx = sorted((BACKUP / "index").glob("*.json"))
+    if args.list or not args.session_id:
+        for f in idx[-args.limit:]:
+            say(f"{f.stem}  {len(load_json(f, {'files': {}})['files'])} files")
+        return 0
+    sid = args.session_id
+    if args.at:
+        idx = [f for f in idx if f.stem <= re.sub(r"[^0-9TZ]", "", args.at) + "Z" * (16 - len(args.at))]
+    for f in reversed(idx):
+        files = load_json(f, {"files": {}})["files"]
+        hits = {p: e for p, e in files.items() if re.search(rf"/{re.escape(sid)}(\.jsonl$|/)", p)}
+        if not hits:
+            continue
+        say(f"backup {f.stem}: {len(hits)} files for {sid}")
+        if args.dry_run:
+            for p, e in sorted(hits.items())[:20]:
+                say(f"  {e['size']:>12}  {p}")
+            return 0
+        if sid in running_sessions():
+            say(f"{sid} is running; exit it before recovering its files")
+            return 1
+        stamp = int(time.time())
+        for p, e in sorted(hits.items()):
+            dest = Path(p)
+            if dest.exists():
+                if dest.stat().st_size == e["size"] and file_sha(dest, e["size"]) == e["sha"]:
+                    continue
+                dest.rename(dest.with_name(f"{dest.name}.pre-recover-{stamp}"))
+            restore_file(e, p, dest)
+        say(f"recovered {len(hits)} files; resume with: claude/copilot --resume {sid}  (or agentctl lost)")
+        return 0
+    say(f"{sid} is not in any backup")
+    return 1
+
+
+# --------------------------------------------------------------------------- main
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(prog="agentctl", description=__doc__.splitlines()[0])
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    s = sub.add_parser("snapshot", help="record panes and agent sessions")
+    s.add_argument("--quiet", "-q", action="store_true")
+    s.set_defaults(fn=cmd_snapshot)
+    s = sub.add_parser("restore", help="recreate missing panes and resume agents")
+    s.add_argument("--dry-run", "-n", action="store_true")
+    s.add_argument("--at", help="manifest timestamp prefix from `agentctl history`, or a path")
+    s.add_argument("--session", "-s", action="append", help="only these tmux sessions")
+    s.add_argument("--into-running", action="store_true",
+                   help="also resume agents in existing panes whose shell is idle at a prompt")
+    s.set_defaults(fn=cmd_restore)
+    sub.add_parser("tick", help="systemd timer entry point").set_defaults(fn=cmd_tick)
+    sub.add_parser("status", help="saved vs live").set_defaults(fn=cmd_status)
+    s = sub.add_parser("lost", help="agent sessions no longer running")
+    s.add_argument("--limit", type=int, default=30)
+    s.set_defaults(fn=cmd_lost)
+    s = sub.add_parser("history", help="saved manifests")
+    s.add_argument("--limit", type=int, default=30)
+    s.set_defaults(fn=cmd_history)
+    sub.add_parser("pause", help="disable automatic restore").set_defaults(fn=cmd_pause)
+    sub.add_parser("unpause", help="enable automatic restore").set_defaults(fn=cmd_pause)
+    sub.add_parser("doctor", help="health checks").set_defaults(fn=cmd_doctor)
+    s = sub.add_parser("backup", help="incremental transcript backup")
+    s.add_argument("--prune", action="store_true")
+    s.add_argument("--quiet", "-q", action="store_true")
+    s.set_defaults(fn=cmd_backup)
+    s = sub.add_parser("recover", help="restore a session's files from backup")
+    s.add_argument("session_id", nargs="?", default="")
+    s.add_argument("--at", help="newest backup at or before this UTC stamp (YYYYMMDDTHHMMSS)")
+    s.add_argument("--list", action="store_true")
+    s.add_argument("--limit", type=int, default=20)
+    s.add_argument("--dry-run", "-n", action="store_true")
+    s.set_defaults(fn=cmd_recover)
+    args = ap.parse_args(argv)
+    signal.signal(signal.SIGPIPE, signal.SIG_DFL)
+    return args.fn(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
