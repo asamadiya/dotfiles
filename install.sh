@@ -83,11 +83,25 @@ for script in "$DOTFILES/bin/"*; do
     link "$script" "$HOME/bin/$name"
 done
 
-echo "=== Systemd user service ==="
-mkdir -p "$HOME/.config/systemd/user"
-generate "$DOTFILES/systemd/tmux.service.tpl" "$HOME/.config/systemd/user/tmux.service"
+echo "=== Session resilience (agentctl, mosh-watch, dbus-reaper) ==="
+mkdir -p "$HOME/.config/systemd/user" "$HOME/.config/agentctl"
+for unit in agentctl-tick.service agentctl-tick.timer agentctl-backup.service agentctl-backup.timer \
+            mosh-watch.service dbus-reaper.service; do
+  generate "$DOTFILES/systemd/$unit.tpl" "$HOME/.config/systemd/user/$unit"
+done
+[ -e "$HOME/.config/agentctl/config.json" ] || link "$DOTFILES/config/agentctl/config.json" "$HOME/.config/agentctl/config.json"
+# tmux.service (continuum boot) was replaced by agentctl-tick.timer, which restores sessions with their agents
+if [ -e "$HOME/.config/systemd/user/tmux.service" ]; then
+  systemctl --user disable tmux.service 2>/dev/null || true
+  mv "$HOME/.config/systemd/user/tmux.service" "$HOME/.config/systemd/user/tmux.service.retired"
+  echo "  retired: tmux.service"
+fi
 systemctl --user daemon-reload 2>/dev/null || true
-systemctl --user enable tmux.service 2>/dev/null && echo "  enabled: tmux.service" || echo "  skip: systemd not available"
+systemctl --user enable --now agentctl-tick.timer agentctl-backup.timer mosh-watch.service dbus-reaper.service 2>/dev/null \
+  && echo "  enabled: agentctl-tick.timer agentctl-backup.timer mosh-watch.service dbus-reaper.service" \
+  || echo "  skip: systemd not available"
+loginctl show-user "$(whoami)" -p Linger 2>/dev/null | grep -q yes \
+  || echo "  NOTE: run 'loginctl enable-linger' (needs admin) so timers start at boot, not at first login"
 
 # --- nvidia-daemon (only if driver detected) ---
 if [ -d /proc/driver/nvidia ]; then

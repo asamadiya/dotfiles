@@ -24,11 +24,8 @@ dotfiles/
 ├── bin/
 │   ├── claude-statusline.sh         # Statusline: model|branch+dirty|GPU|load|cost|context
 │   ├── claude-guard-main.sh         # PreToolUse hook: blocks edits on main/master
-│   ├── tmux-claude-restore          # Resurrect: resumes claude sessions by ID
-│   ├── tmux-save-claude-sessions    # Post-save hook: maps panes to claude session IDs
-│   ├── tmux-copilot-restore         # Resurrect: resumes copilot sessions by ID
-│   ├── tmux-save-copilot-sessions   # Post-save hook: maps panes to copilot session IDs
-│   ├── tmux-restore                 # Manual resurrect trigger
+│   ├── agentctl                     # Snapshot/restore tmux + Claude/Copilot sessions; transcript backups
+│   ├── mosh-watch                   # mosh teardown verdicts + orphan mosh-server reaper
 │   ├── keepalive.sh                 # VM keepalive daemon
 │   ├── sysstat.sh                   # Unified tmux status segment: CPU%/MEM/DISK/GPU/load with color escalation
 │   ├── nvidia-daemon.sh             # systemd --user service caching nvidia-smi to /tmp/nvidia-stats
@@ -141,6 +138,47 @@ Opus 4.6 main dotfiles GPU:0% 0M/16384M L:3.73 $1.42 ████░░░░░
 
 model | git branch (cyan) | dir | GPU (magenta) | load | cost | context bar (color-coded)
 
+## Session resilience (agentctl)
+
+Every tmux pane, the exact Claude/Copilot session in it, and the local proxies the
+agents depend on are recorded once a minute. If the tmux server dies or the VM
+reboots, `agentctl-tick.timer` recreates the sessions, windows and panes and resumes
+each agent with `--resume <exact id>`, the launcher's env (e.g. `ANTHROPIC_BASE_URL`)
+and its cwd. Proxies come back first. Nothing that is running is ever touched, a
+session that is already running elsewhere is never started again, and a session that
+was open in two panes comes back once.
+
+```
+agentctl status            # saved vs live; flags sessions open in two panes
+agentctl doctor            # timers, manifest age, proxies, disk, memory, backups
+agentctl lost              # sessions no longer running, with copy-paste resume commands
+agentctl restore -n        # what a restore would do
+agentctl restore           # recreate what is missing now
+agentctl restore --at 20261029T1840 -s work   # an older layout, one session
+agentctl pause|unpause     # stop/allow automatic restore
+agentctl recover <id>      # bring back a session's transcript from backup
+```
+
+| Piece | What it does |
+|---|---|
+| `agentctl-tick.timer` | 20 s after the user manager starts, then every minute: restore if the server is gone or was replaced, else snapshot |
+| `agentctl-backup.timer` | every 15 min: incremental backup of live + 30-day transcripts to `~/.local/share/agentctl/backup` (zstd shards of appended bytes; 48 h all, 14 daily, 8 weekly; skips below 10 GiB free) |
+| `mosh-watch.service` | logs which side ended each mosh session; reaps mosh-servers silent for 7 days |
+| `dbus-reaper.service` | kills leaked `dbus-daemon`s older than 5 min (authn-cli leak; see `shell/shared.sh`) |
+
+State lives in `~/.local/state/agentctl` (`current.json`, `history/`, `seen.json`, `agentctl.log`);
+config in `~/.config/agentctl/config.json` (service rules). tmux-resurrect still takes
+layout snapshots (prefix C-s/C-r) but no longer restores agents, and continuum no
+longer auto-restores or boots tmux; `tmux.service` is retired. Tests:
+`python3 -m pytest tests/test_agentctl.py -q` (private tmux socket, fake agents).
+
+Session ids: Claude Code writes `~/.claude/sessions/<pid>.json` (checked against the
+process start time); Copilot CLI logs `Registering foreground session: <id>`. A pane
+whose agent has no id yet (e.g. still at the trust prompt) is reported, never guessed.
+
+The backups share the home disk: they cover deleted or corrupted transcripts and
+restarts, not disk loss.
+
 ## Troubleshooting
 
 See `CHANGELOG.md` for 20 documented issues with root causes and fixes. Common ones:
@@ -162,7 +200,7 @@ See `CHANGELOG.md` for 20 documented issues with root causes and fixes. Common o
 
 ### New key scripts
 
-`sysstat.sh`, `nvidia-daemon.sh`, `tmux-save-copilot-sessions`, `tmux-copilot-restore`, `wt`, `session-end-autocommit.sh`, `copilot-with-autocommit`, `state-snapshot.sh`, `pane-log-toggle.sh`, `pane-log-mode.sh`, `lfs-template-apply`, `lint-shell.sh`. Retired: `host-health.sh` (superseded by `sysstat.sh`).
+`sysstat.sh`, `nvidia-daemon.sh`, `agentctl`, `mosh-watch`, `wt`, `session-end-autocommit.sh`, `copilot-with-autocommit`, `state-snapshot.sh`, `pane-log-toggle.sh`, `pane-log-mode.sh`, `lfs-template-apply`, `lint-shell.sh`. Retired: `host-health.sh` (superseded by `sysstat.sh`).
 
 ### Key bindings added
 

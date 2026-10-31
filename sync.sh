@@ -30,10 +30,15 @@ declare -A FILES=(
 declare -A TEMPLATES=(
     ["$HOME/.tmux.conf.local"]="$DOTFILES/tmux/tmux.conf.local.tpl"
     ["$HOME/.claude/settings.json"]="$DOTFILES/claude/settings.json.tpl"
-    ["$HOME/.config/systemd/user/tmux.service"]="$DOTFILES/systemd/tmux.service.tpl"
+    ["$HOME/.config/systemd/user/agentctl-tick.service"]="$DOTFILES/systemd/agentctl-tick.service.tpl"
+    ["$HOME/.config/systemd/user/agentctl-tick.timer"]="$DOTFILES/systemd/agentctl-tick.timer.tpl"
+    ["$HOME/.config/systemd/user/agentctl-backup.service"]="$DOTFILES/systemd/agentctl-backup.service.tpl"
+    ["$HOME/.config/systemd/user/agentctl-backup.timer"]="$DOTFILES/systemd/agentctl-backup.timer.tpl"
+    ["$HOME/.config/systemd/user/mosh-watch.service"]="$DOTFILES/systemd/mosh-watch.service.tpl"
+    ["$HOME/.config/systemd/user/dbus-reaper.service"]="$DOTFILES/systemd/dbus-reaper.service.tpl"
 )
 
-BIN_SCRIPTS=(tmux-claude-restore tmux-save-claude-sessions tmux-restore keepalive.sh claude-guard-main.sh claude-statusline.sh lint-shell.sh lfs-template-apply sysstat.sh nvidia-daemon.sh tmux-save-copilot-sessions tmux-copilot-restore wt session-end-autocommit.sh copilot-with-autocommit state-snapshot.sh pane-log-toggle.sh pane-log-mode.sh install-user-bins.sh)
+BIN_SCRIPTS=(agentctl mosh-watch keepalive.sh claude-guard-main.sh claude-statusline.sh lint-shell.sh lfs-template-apply sysstat.sh nvidia-daemon.sh wt session-end-autocommit.sh copilot-with-autocommit state-snapshot.sh pane-log-toggle.sh pane-log-mode.sh install-user-bins.sh)
 
 copy_if_exists() {
     local src="$1" dst="$2"

@@ -37,10 +37,8 @@ dotfiles/
 | `bootstrap.sh` | Installs everything on a fresh VM (libevent, tmux 3.5a, oh-my-tmux, TPM, claude) |
 | `install.sh` | Symlinks dotfiles, generates systemd service from template |
 | `sync.sh` | `--push` (repo->live), no args (live->repo + diff), `--commit` (live->repo + commit) |
-| `bin/tmux-claude-restore` | Resurrect inline strategy — resumes claude sessions by ID |
-| `bin/tmux-save-claude-sessions` | Post-save hook — maps panes to claude session IDs |
-| `bin/tmux-copilot-restore` | Resurrect inline strategy — resumes copilot sessions by ID (unsets COPILOT_* env leaks, cleans stale locks) |
-| `bin/tmux-save-copilot-sessions` | Post-save hook — maps panes to copilot session IDs, rewrites saved cmd to include `--resume=<uuid> --allow-all-tools` |
+| `bin/agentctl` | Snapshot/restore of tmux panes + exact Claude/Copilot sessions + proxies (systemd `agentctl-tick.timer`); incremental transcript backup/recover (`agentctl-backup.timer`). Tests: `tests/test_agentctl.py` |
+| `bin/mosh-watch` | `mosh-watch.service`: mosh teardown verdicts, reaps mosh-servers silent 7 days |
 | `bin/claude-statusline.sh` | Statusline: model, git branch + dirty glyph, GPU, load, cost, context bar |
 | `bin/claude-guard-main.sh` | PreToolUse hook — blocks Edit/Write on main/master branch |
 | `bin/sysstat.sh` | Unified tmux status segment: CPU%/MEM/DISK/GPU/load with per-metric color escalation |
@@ -60,13 +58,13 @@ dotfiles/
 - **systemd service uses template** (`tmux.service.tpl`) with `__USER__`/`__HOME__` placeholders, generated at install time so it works for any user
 - **tmux 3.5a built from source** because system tmux (3.2a) lacks `allow-passthrough` and `hyperlinks` for cmd+click
 - **Pane contents restore disabled** (`@resurrect-capture-pane-contents on` for saving, but restore with pane contents crashes tmux 3.5a with 3.2a-format saves)
-- **Claude session restore** uses a two-part system: post-save hook maps pane→session ID, inline restore strategy resumes exact conversation
+- **Session restore is agentctl's job, not resurrect's**: resurrect keeps layout snapshots only; agentctl records exact session ids (Claude `~/.claude/sessions/<pid>.json`, Copilot process log), never touches a running pane, never double-starts a session, and starts proxies before agents. `tmux.service`/continuum boot retired in favour of `agentctl-tick.timer`
 
 ## Known Issues / Gotchas
 
 1. `bin/claude-guard-main.sh` blocks Edit/Write on main branch — use `bash` or `sed` to modify files when working on dotfiles repo itself
 2. tmux-resurrect pane contents restore is incompatible across tmux major versions — if sessions don't restore, try with `@resurrect-capture-pane-contents off`
-3. Claude env vars (`CLAUDE_CODE_SESSION`, `CLAUDE_CODE_ENTRY_POINT`, `CLAUDECODE`) leak into restored panes — `tmux-claude-restore` unsets all three
+3. `DBUS_SESSION_BUS_ADDRESS=disabled:` lives in `shell/shared.sh` (bash and zsh): authn-cli otherwise leaks a dbus-daemon per call until the inotify cap breaks systemd --user
 4. oh-my-tmux overrides `prefix+p` to paste — fixed with `#!important` binding
 
 ## Shell Quirks

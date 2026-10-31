@@ -148,17 +148,20 @@ tmux_conf_update_plugins_on_reload=true
 set -g @plugin 'tmux-plugins/tmux-resurrect'
 set -g @plugin 'tmux-plugins/tmux-continuum'
 
-# Resurrect: capture everything
+# Resurrect: manual layout snapshots (prefix C-s / C-r). Agent sessions are NOT
+# restored here: bin/agentctl owns that (exact session ids, proxies, no duplicates),
+# driven by agentctl-tick.timer, and it fills in agents after a resurrect restore.
 set -g @resurrect-capture-pane-contents 'on'
 set -g @resurrect-strategy-vim 'session'
 set -g @resurrect-strategy-nvim 'session'
-set -g @resurrect-processes 'claude->__HOME__/bin/tmux-claude-restore copilot->__HOME__/bin/tmux-copilot-restore ssh vim nvim htop man less tail top watch'
-set -g @resurrect-hook-post-save-all '__HOME__/bin/tmux-save-claude-sessions; __HOME__/bin/tmux-save-copilot-sessions'
+set -g @resurrect-processes 'ssh vim nvim htop man less tail top watch'
+set -g @resurrect-hook-post-save-all '__HOME__/bin/agentctl snapshot --quiet'
 
-# Continuum: auto-save every 5 min, auto-restore on tmux start
+# Continuum: periodic resurrect saves only. Auto-restore and boot start are done by
+# agentctl-tick.timer (a systemd user unit), not by a tmux.service.
 set -g @continuum-save-interval '5'
-set -g @continuum-restore 'on'
-set -g @continuum-boot 'on'
+set -g @continuum-restore 'off'
+set -g @continuum-boot 'off'
 
 # Additional plugins
 set -g @plugin 'sainnhe/tmux-fzf'
