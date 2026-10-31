@@ -11,6 +11,11 @@ case ":$PATH:" in
   *) export PATH="$HOME/bin:$PATH" ;;
 esac
 
+# authn-cli (godbus) dbus-launches an orphan session bus per call when none is set;
+# each pins an inotify instance until the 1024 cap takes down systemd --user.
+# Here rather than zshenv so bash (mosh/ssh login shells, cron) gets it too.
+export DBUS_SESSION_BUS_ADDRESS=disabled:
+
 # Core env
 export EDITOR="nvim"
 export VISUAL="nvim"

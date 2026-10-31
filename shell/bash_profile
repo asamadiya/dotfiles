@@ -1,6 +1,8 @@
 # .bash_profile
 
 [ -f ~/.bashrc ] && . ~/.bashrc
+# bashrc returns early for non-interactive shells; shared env must still apply
+[ -f "$HOME/my_stuff/dotfiles/shell/shared.sh" ] && . "$HOME/my_stuff/dotfiles/shell/shared.sh"
 
 PATH=$PATH:$HOME/bin
 

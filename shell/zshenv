@@ -5,7 +5,3 @@
 if [[ -f "$HOME/my_stuff/dotfiles/shell/shared.sh" ]]; then
   source "$HOME/my_stuff/dotfiles/shell/shared.sh"
 fi
-
-# authn-cli (godbus) dbus-launches an orphan session bus per call when none is set;
-# each pins an inotify instance until the 1024 cap takes down systemd --user.
-export DBUS_SESSION_BUS_ADDRESS=disabled:
