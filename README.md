@@ -26,6 +26,7 @@ dotfiles/
 │   ├── claude-guard-main.sh         # PreToolUse hook: blocks edits on main/master
 │   ├── agentctl                     # Snapshot/restore tmux + Claude/Copilot sessions; transcript backups
 │   ├── mosh-watch                   # mosh teardown verdicts + orphan mosh-server reaper
+├── mac/bin/tmosh                   # Mac side: mosh + tmux attach that reconnects after drops (tmosh -h)
 │   ├── keepalive.sh                 # VM keepalive daemon
 │   ├── sysstat.sh                   # Unified tmux status segment: CPU%/MEM/DISK/GPU/load with color escalation
 │   ├── nvidia-daemon.sh             # systemd --user service caching nvidia-smi to /tmp/nvidia-stats

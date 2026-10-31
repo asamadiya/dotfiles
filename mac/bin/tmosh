@@ -1,0 +1,62 @@
+#!/bin/zsh
+# tmosh - mosh + tmux that survives dropped connections. See `tmosh -h`.
+host=${DEV_VM_HOST:-this-is-default-hostname}
+
+usage() {
+  cat <<'HELP'
+tmosh - mosh + tmux that survives dropped connections
+
+Usage: tmosh [-s] SESSION    attach tmux session SESSION on the host (created if missing)
+       tmosh [-l]            list tmux sessions on the host
+       tmosh -h              this help
+
+  -s, --shared  keep other clients attached to SESSION. By default they are
+                detached, so the tmux client and mosh-server left over from a
+                dead connection exit instead of piling up on the host.
+  -l, --list    list sessions (same as no arguments)
+
+If mosh exits uncleanly (exit status not 0: the network dropped, the laptop
+slept, or a content filter restarted on wake), tmosh reconnects. It backs off
+3s, 6s ... up to 60s and resets after a connection that lasted 60s. The tmux
+session keeps running on the host, so reconnecting loses nothing.
+
+Stops on detach (tmux prefix + d), mosh quit (Ctrl-^ .), or Ctrl-C while
+waiting to reconnect.
+
+Environment:  DEV_VM_HOST  host to connect to (default: this-is-default-hostname)
+Log:          ~/Library/Logs/tmosh-SESSION.log  mosh stderr + exit status per run
+HELP
+}
+
+list() {
+  ssh "$host" "tmux list-sessions -F '#{session_name}|#{session_windows} windows|#{?session_attached,attached,detached}|#{t:session_activity}'" \
+    | column -t -s '|'
+}
+
+detach=-D
+while (( $# )); do
+  case $1 in
+    -h|--help)   usage; exit 0 ;;
+    -l|--list)   list; exit ;;
+    -s|--shared) detach= ;;
+    -*)          usage >&2; exit 2 ;;
+    *)           break ;;
+  esac
+  shift
+done
+(( $# )) || { list; exit; }
+
+s=$1
+log=~/Library/Logs/tmosh-$s.log
+delay=3
+while :; do
+  start=$SECONDS
+  mosh "$host" -- tmux new-session -A ${detach:+$detach} -s "$s" 2> >(tee -a "$log" >&2)
+  rc=$?
+  print -r -- "$(date '+%F %T') host=$host exit=$rc lasted=$(( SECONDS - start ))s" >> "$log"
+  (( rc == 0 )) && exit 0
+  (( SECONDS - start >= 60 )) && delay=3
+  print -u2 "tmosh: mosh exited $rc; reconnecting in ${delay}s (Ctrl-C to stop)"
+  sleep $delay
+  (( delay = delay * 2 > 60 ? 60 : delay * 2 ))
+done

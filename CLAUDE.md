@@ -39,6 +39,7 @@ dotfiles/
 | `sync.sh` | `--push` (repo->live), no args (live->repo + diff), `--commit` (live->repo + commit) |
 | `bin/agentctl` | Snapshot/restore of tmux panes + exact Claude/Copilot sessions + proxies (systemd `agentctl-tick.timer`); incremental transcript backup/recover (`agentctl-backup.timer`). Tests: `tests/test_agentctl.py` |
 | `bin/mosh-watch` | `mosh-watch.service`: mosh teardown verdicts, reaps mosh-servers silent 7 days |
+| `mac/bin/tmosh` | Mac side, copied to `~/.local/bin`: mosh + `tmux new-session -A` with backoff reconnect after unclean exits; detaches stale clients unless `-s`. Host from `DEV_VM_HOST` |
 | `bin/claude-statusline.sh` | Statusline: model, git branch + dirty glyph, GPU, load, cost, context bar |
 | `bin/claude-guard-main.sh` | PreToolUse hook — blocks Edit/Write on main/master branch |
 | `bin/sysstat.sh` | Unified tmux status segment: CPU%/MEM/DISK/GPU/load with per-metric color escalation |
